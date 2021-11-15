@@ -89,8 +89,8 @@ class outconv(nn.Module):
 		x = self.conv(x)
 		return x
 
-"""
-class NNModel(nn.Module):
+
+class NNModel__(nn.Module):
 	def __init__(self, nchannels=1, nclasses=1, nchannels_expand=64, image_size=64):
 		super(NNModel, self).__init__()
 		self.inconv = inconv(nchannels, nchannels_expand)
@@ -126,7 +126,7 @@ class NNModel(nn.Module):
 		# x2 = torch.clamp(x2, min=0, max=1)
 		xout = torch.cat((x0, x1), 1)
 		return xout
-"""
+
 	
 class NNModel(nn.Module):
 	def __init__(self, n_channels=1, n_classes=1):
