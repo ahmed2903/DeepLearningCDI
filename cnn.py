@@ -298,39 +298,61 @@ class CNNTrain():
 
 		return from_dlpack(cx1122.toDlpack())
 
+	def chi_loss(self, output, target):
+		# chi squared error
+		loss = torch.mean(torch.abs((output-target))**2)/(torch.mean(target**2)+1e-40)
+		return loss 
 
 	def pcc_loss(self, output, target):
-		x = output
-		y = target
-		vx = x - torch.mean(x)
-		vy = y - torch.mean(y)
-		loss = torch.sum(vx * vy) / (torch.sqrt(torch.sum(vx ** 2) * torch.sum(vy ** 2)))
-		return 1 - loss
+		# Pearson correlation coefficient
+		x = torch.abs(output)
+		y = torch.abs(target)
+		vx = torch.abs(x - torch.mean(x))
+		vy = torch.abs(y - torch.mean(y))
+		loss = torch.mean(vx * vy) / (torch.sqrt(torch.mean(vx ** 2) * torch.mean(vy ** 2))+1e-40)
+		return 1. - loss
 	
-	def all_loss(self, output, target, input, device):
+	def all_loss(self, output, target):
 		X = self.data_shape[-2]
 		Y= self.data_shape[-1]
 		X2 = X//2
 		X4 = X//4
 		Y2 = Y//2
 		Y4 = Y//4
-		output0 = torch.zeros(output.shape[0], output.shape[1], X, Y, requires_grad=True).to(device)
+
+		output0 = torch.zeros(output.shape[0], output.shape[1], X, Y, device=self.device, requires_grad=False)
 		output0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4)] = output
-		target0 = torch.zeros(output.shape[0], output.shape[1], X, Y, requires_grad=True).to(device)
+		target0 = torch.zeros(output.shape[0], output.shape[1], X, Y, device=self.device, requires_grad=False)
 		target0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4)] = target
+
 		loss1 = torch.sqrt(torch.mean((output0[:, 0, :, :] - target0[:, 0, :, :]) ** 2) /
 						   (torch.mean(target0[:, 0, :, :] ** 2)))
 		loss2 = torch.sqrt(torch.mean((output0[:, 1, :, :] - target0[:, 1, :, :]) ** 2) /
 						   (torch.mean(target0[:, 1, :, :] ** 2)))
-		tx01 = self.pull_out_gpu_fft(output)
-		tx02 = self.pull_out_gpu_fft(target)
-		loss3 = self.pcc_loss(tx01, tx02)
+
+		#complex output object
+		obj_comp = torch.zeros((output0.shape[0]), 2, X, Y, requires_grad=False, device = self.device) 
+
+		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4)] = output[:, 0, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:]))
+		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4)] = output[:, 0, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:]))
+
+		obj_comp = obj_comp[:,0,:,:] +1j * obj_comp[:,1,:,:]
+
+		obj_comp = torch.fft.fftn(obj_comp, dim= (-2,-1))
+
+		#amp_out = torch.zeros((output.shape[0], X, Y), requires_grad=False, device=self.device, dtype=float)
+		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:]) **2 + torch.abs(obj_comp[:,:,:]) **2)
+
+		loss3 = self.pcc_loss(amp_out, target0[:,:,:]) #EDIT for the proper target
+
+
 		alpha, beta, gamma = 1., 1., 4.
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
+
 		return loss
 		
-	def criterion(self, output, target, input, device):
-		return self.all_loss(output, target, input, self.device)
+	def criterion(self, output, target):
+		return self.all_loss(output, target)
 
 	def get_lr(self):
 		for param_group in self.optimiser.param_groups:
@@ -342,16 +364,22 @@ class CNNTrain():
 		for epoch in range(self.epochs):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
 			for ii, loader_batch_train in enumerate(self.loader_train, 0):
+				
 				# get the inputs; data is a list of [inputs, labels]
+				# x_train = input
+				# y_train = target 
 				x_train, y_train = loader_batch_train
 				x_train, y_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device)
+				
 				# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
 				self.optimiser.zero_grad()
+				
 				# forward propagation
 				y_train_predict = self.model.forward(x_train)
+				
 				#define the loss and then backward propagate
 
-				loss1 = self.criterion(y_train_predict, y_train, x_train, self.device) #EDIT ME!
+				loss1 = self.criterion(y_train_predict, y_train) #EDIT ME!
 				
 				loss1.backward()
 				#optimize the weights and biases
