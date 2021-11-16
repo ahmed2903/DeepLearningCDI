@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from torch.autograd import Variable
 
-import cupy as cp
+#import cupy as cp
 
 from torch.utils.dlpack import to_dlpack
 from torch.utils.dlpack import from_dlpack
@@ -281,20 +281,20 @@ class CNNTrain():
 		Y2 = Y//2
 		Y4 = Y//4
 		dx = to_dlpack(output) # type/tensor conversion
-		cx = cp.fromDlpack(dx) # type/tensor conversion
+		cx = np.fromDlpack(dx) # type/tensor conversion
 		cx1, cx2 = cx[:, 0, :, :], cx[:, 1, :, :] #split channels 
 
-		cx11 = cp.zeros(([cx1.shape[0], 1, X, Y]), dtype='float32') #empty arrays
-		cx22 = cp.zeros(([cx2.shape[0], 1, X, Y]), dtype='float32') #empty arrays
+		cx11 = np.zeros(([cx1.shape[0], 1, X, Y]), dtype='float32') #empty arrays
+		cx22 = np.zeros(([cx2.shape[0], 1, X, Y]), dtype='float32') #empty arrays
 
 		#increase dimensions to 64x64 (input dimensions for FT)
 
 		cx11[:, 0, X4:X4+X2, Y4:Y4+Y2] = cx1.copy() # cenre array of 32x32 in array of 64x64
 		cx22[:, 0, X4:X4+X2, Y4:Y4+Y2] = cx2.copy() # cenre array of 32x32 in array of 64x64
 
-		cx1122 = cx11 * cp.exp(4j * cp.pi * cx22)
+		cx1122 = cx11 * np.exp(4j * np.pi * cx22)
 
-		cx1122 = cp.abs(cp.fft.ifftshift(cp.fft.fft2(cp.fft.fftshift(cx1122, axes=(-2, -1)), axes=(-2, -1)), axes=(-2, -1)))
+		cx1122 = np.abs(np.fft.ifftshift(np.fft.fft2(np.fft.fftshift(cx1122, axes=(-2, -1)), axes=(-2, -1)), axes=(-2, -1)))
 
 		return from_dlpack(cx1122.toDlpack())
 
