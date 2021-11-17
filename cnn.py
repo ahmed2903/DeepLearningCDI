@@ -9,6 +9,7 @@ from torch.autograd import Variable
 import numpy as np
 import matplotlib.pyplot as plt
 
+from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data import Dataset, DataLoader
 from torch.autograd import Variable
 
@@ -183,7 +184,8 @@ class CNNTrain():
 		self.device_type = device_type
 		self.device = None
 		self.input_data = None
-		self.target_data = None
+		self.target_data0 = None
+		self.target_data1 = None
 		self.data_shape = None
 		self.nchannels = 1
 		self.nclasses= 1
@@ -213,8 +215,11 @@ class CNNTrain():
 	def SetInputData(self, fname):
 		self.input_data = np.load(fname)
 		self.data_shape = self.input_data.shape
-	def SetTargetData(self, fname):
-		self.target_data = np.load(fname)
+		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-1], self.data_shape[-2]), dtype='float32')
+		self.target_data1[:] = self.input_data[:,0,:,:]
+	def SetTargetDataReal(self, fname):
+		self.target_data0 = np.load(fname)
+
 	def SetDimensions(self):
 		self.nchannels = self.data_shape[1]
 		self.nclasses= self.data_shape[1]
@@ -226,40 +231,49 @@ class CNNTrain():
 		self.valid_size = valid_size
 	def SplitData(self):
 		num_train = len(self.input_data)
-		# print(num_train)
+		print(num_train)
 		indices = list(range(num_train))
 		split = int(np.floor(self.valid_size * num_train))
 		np.random.shuffle(indices)
 		self.train_idx, self.test_idx = indices[split:], indices[:split]
+		print(len(self.train_idx), len(self.test_idx))
 	def SetBatchSize(self, batch_size):
         	self.batch_size = batch_size
 	def _LoadSplitTrain(self, index):
 		datax = self.input_data[index].astype('float32')
-		datay = self.target_data[index].astype('float32')
+		datay = self.target_data0[index].astype('float32')
+		dataz = self.target_data1[index].astype('float32')
+		
 		num_train = len(datax)
-		# print(num_train)
+
 		indices = list(range(num_train))
 		np.random.shuffle(indices)
-		from torch.utils.data.sampler import SubsetRandomSampler
-		# print(split)
-		train_idx = indices[0:]
-		train_sampler = SubsetRandomSampler(train_idx)
+
+		idx = indices[0:]
+		sampler = SubsetRandomSampler(idx)
+
 		dx = torch.Tensor(datax)
 		dy = torch.Tensor(datay)
-		# dataset_tmp = Dataset(torch.Tensor(datax), torch.Tensor(datay))
-		data_xy = torch.utils.data.TensorDataset(dx, dy)
-		trainloader = torch.utils.data.DataLoader(data_xy,
-					   sampler=train_sampler, shuffle=False)
-		del datax, datay, dx, dy, data_xy
+		dz = torch.Tensor(dataz)
+
+		data_xyz = torch.utils.data.TensorDataset(dx, dy, dz)
+		
+		trainloader = torch.utils.data.DataLoader(data_xyz,
+					   sampler=sampler, shuffle=False, batch_size = self.batch_size) #think about including num_workers for mulit process data loading 
+
+		del datax, datay, dataz, dx, dy, dz, data_xyz
 		return trainloader
+
 	def LoadSplitTrain(self, loadtype='test'):
+
 		if loadtype == 'train':
 			self.loader_train = self._LoadSplitTrain(self.train_idx)
 		elif loadtype == 'test':
 			self.loader_test = self._LoadSplitTrain(self.test_idx)
 		else:
-			# could raise error here
-			pass
+			print('error starts here')
+
+
 	def SetLRStepSize(self, lrate_step_size):
 		self.lrate_step_size = lrate_step_size
 	def SetLR(self, lr):
@@ -273,30 +287,30 @@ class CNNTrain():
 	def SetScheduler(self):
 		self.scheduler = StepLR(self.optimiser, step_size=self.lrate_step_size, gamma=self.gamma)
 		
-	def pull_out_gpu_fft(self, output):
-		X = self.data_shape[-2]
-		Y= self.data_shape[-1]
-		X2 = X//2
-		X4 = X//4
-		Y2 = Y//2
-		Y4 = Y//4
-		dx = to_dlpack(output) # type/tensor conversion
-		cx = np.fromDlpack(dx) # type/tensor conversion
-		cx1, cx2 = cx[:, 0, :, :], cx[:, 1, :, :] #split channels 
+	# def pull_out_gpu_fft(self, output):
+	# 	X = self.data_shape[-2]
+	# 	Y= self.data_shape[-1]
+	# 	X2 = X//2
+	# 	X4 = X//4
+	# 	Y2 = Y//2
+	# 	Y4 = Y//4
+	# 	dx = to_dlpack(output) # type/tensor conversion
+	# 	cx = np.fromDlpack(dx) # type/tensor conversion
+	# 	cx1, cx2 = cx[:, 0, :, :], cx[:, 1, :, :] #split channels 
 
-		cx11 = np.zeros(([cx1.shape[0], 1, X, Y]), dtype='float32') #empty arrays
-		cx22 = np.zeros(([cx2.shape[0], 1, X, Y]), dtype='float32') #empty arrays
+	# 	cx11 = np.zeros(([cx1.shape[0], 1, X, Y]), dtype='float32') #empty arrays
+	# 	cx22 = np.zeros(([cx2.shape[0], 1, X, Y]), dtype='float32') #empty arrays
 
-		#increase dimensions to 64x64 (input dimensions for FT)
+	# 	#increase dimensions to 64x64 (input dimensions for FT)
 
-		cx11[:, 0, X4:X4+X2, Y4:Y4+Y2] = cx1.copy() # cenre array of 32x32 in array of 64x64
-		cx22[:, 0, X4:X4+X2, Y4:Y4+Y2] = cx2.copy() # cenre array of 32x32 in array of 64x64
+	# 	cx11[:, 0, X4:X4+X2, Y4:Y4+Y2] = cx1.copy() # cenre array of 32x32 in array of 64x64
+	# 	cx22[:, 0, X4:X4+X2, Y4:Y4+Y2] = cx2.copy() # cenre array of 32x32 in array of 64x64
 
-		cx1122 = cx11 * np.exp(4j * np.pi * cx22)
+	# 	cx1122 = cx11 * np.exp(4j * np.pi * cx22)
 
-		cx1122 = np.abs(np.fft.ifftshift(np.fft.fft2(np.fft.fftshift(cx1122, axes=(-2, -1)), axes=(-2, -1)), axes=(-2, -1)))
+	# 	cx1122 = np.abs(np.fft.ifftshift(np.fft.fft2(np.fft.fftshift(cx1122, axes=(-2, -1)), axes=(-2, -1)), axes=(-2, -1)))
 
-		return from_dlpack(cx1122.toDlpack())
+	# 	return from_dlpack(cx1122.toDlpack())
 
 	def chi_loss(self, output, target):
 		# chi squared error
@@ -312,7 +326,7 @@ class CNNTrain():
 		loss = torch.mean(vx * vy) / (torch.sqrt(torch.mean(vx ** 2) * torch.mean(vy ** 2))+1e-40)
 		return 1. - loss
 	
-	def all_loss(self, output, target):
+	def all_loss(self, output, target, input):
 		X = self.data_shape[-2]
 		Y= self.data_shape[-1]
 		X2 = X//2
@@ -331,6 +345,9 @@ class CNNTrain():
 						   (torch.mean(target0[:, 1, :, :] ** 2)))
 
 		#complex output object
+		#get complex object of the output i.e. an object that includes the phase and amplitude
+		#perform fourier transform on the object in order to obtain it in reci space 
+		#compare the reci space output with the reci space input in loss3
 		obj_comp = torch.zeros((output0.shape[0]), 2, X, Y, requires_grad=False, device = self.device) 
 
 		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4)] = output[:, 0, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:]))
@@ -343,16 +360,16 @@ class CNNTrain():
 		#amp_out = torch.zeros((output.shape[0], X, Y), requires_grad=False, device=self.device, dtype=float)
 		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:]) **2 + torch.abs(obj_comp[:,:,:]) **2)
 
-		loss3 = self.pcc_loss(amp_out, target0[:,:,:]) #EDIT for the proper target
+		#input has the shape (n,1,X,Y)
 
-
+		loss3 = self.pcc_loss(amp_out, input) #EDIT for the proper target
 		alpha, beta, gamma = 1., 1., 4.
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
 
 		return loss
 		
-	def criterion(self, output, target):
-		return self.all_loss(output, target)
+	def criterion(self, output, target, input):
+		return self.all_loss(output, target, input)
 
 	def get_lr(self):
 		for param_group in self.optimiser.param_groups:
@@ -360,6 +377,7 @@ class CNNTrain():
 
 	def SetNEpochs(self, epochs):
 		self.epochs = epochs
+
 	def TrainNN(self):
 		for epoch in range(self.epochs):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
@@ -368,9 +386,9 @@ class CNNTrain():
 				# get the inputs; data is a list of [inputs, labels]
 				# x_train = input
 				# y_train = target 
-				x_train, y_train = loader_batch_train
-				x_train, y_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device)
-				
+				x_train, y_train, z_train = loader_batch_train
+				x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
+
 				# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
 				self.optimiser.zero_grad()
 				
@@ -379,7 +397,7 @@ class CNNTrain():
 				
 				#define the loss and then backward propagate
 
-				loss1 = self.criterion(y_train_predict, y_train) #EDIT ME!
+				loss1 = self.criterion(y_train_predict, y_train, z_train) #EDIT ME!
 				
 				loss1.backward()
 				#optimize the weights and biases
@@ -398,14 +416,15 @@ class CNNTrain():
 			with torch.no_grad():
 				valid_loss_tmp = 0.0
 				for jj, loader_batch_test in enumerate(self.loader_test, 0):
-					x_test, y_test = loader_batch_test
-					x_test, y_test = x_test.to(self.device), y_test.to(self.device)
+					x_test, y_test, z_test = loader_batch_test
+					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
 					y_pred = self.model.forward(x_test)
-					loss2 = self.criterion(y_pred, y_test, x_test, self.device) # EDIT ME!!
+					loss2 = self.criterion(y_pred, y_test, z_test) # EDIT ME!!
 					valid_loss_tmp += loss2.item()
 
 		#update the learning rate
 		self.scheduler.step()
+		print(len(self.loader_test))
 		self.train_loss.append(train_loss_tmp / len(self.loader_train))
 		self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
 
@@ -446,11 +465,11 @@ if __name__ == '__main__':
 	mynn = CNNTrain()
 	mynn.SetDeviceType('cuda')
 	mynn.SetInputData('reci_intes.npy')
-	mynn.SetTargetData('real_obj.npy')
+	mynn.SetTargetDataReal('real_obj.npy')
 	mynn.SetModel(NNModel)
-	mynn.SetValidSize(0.05)
+	mynn.SetValidSize(0.1)
 	mynn.SplitData()
-	mynn.SetBatchSize(192)
+	mynn.SetBatchSize(5)
 	mynn.LoadSplitTrain(loadtype='train')
 	mynn.LoadSplitTrain(loadtype='test')
 	mynn.SetLRStepSize(10)
@@ -459,7 +478,7 @@ if __name__ == '__main__':
 	mynn.SetGamma(0.1)
 	mynn.SetOptimiser()
 	mynn.SetScheduler()
-	mynn.SetNEpochs(250)
+	mynn.SetNEpochs(20)
 	mynn.TrainNN()
 	mynn.PlotLoss()
 	mynn.SaveParameters()
