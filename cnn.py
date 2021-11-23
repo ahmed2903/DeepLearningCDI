@@ -3,15 +3,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torchsummary import summary
-from torch.optim.lr_scheduler import StepLR
+import torch.optim.lr_scheduler as ss
 from torch.autograd import Variable
 
 import numpy as np
 import matplotlib.pyplot as plt
 
+#from python_utils import get_lr
 from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data import Dataset, DataLoader
 from torch.autograd import Variable
+from torch.nn.utils import clip_grad_norm_, clip_grad_value_
 
 #import cupy as cp
 
@@ -23,17 +25,15 @@ class double_conv(nn.Module):
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(double_conv, self).__init__()
 		self.conv = nn.Sequential(
-			nn.Conv2d(in_ch, out_ch, kernel_size=(3, 3), stride=1, padding=(1, 1), bias=True), # FIX ME 3D
-			#nn.Conv3d(in_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True),
+			nn.Conv3d(in_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True), 
 			nn.LeakyReLU(LRLUGrad, inplace=True),
-			nn.BatchNorm2d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), # FIX ME 3D
-			nn.Conv2d(out_ch, out_ch, kernel_size=(3, 1), stride=1, padding=(1, 0), bias=True), # FIX ME 3D
-			nn.Conv2d(out_ch, out_ch, kernel_size=(1, 3), stride=1, padding=(0, 1), bias=True), # FIX ME 3D
-			#nn.Conv3d(out_ch, out_ch, kernel_size=(3, 1, 1), stride=1, padding=(1, 0, 0), bias=True), 
-			#nn.Conv3d(out_ch, out_ch, kernel_size=(1, 3, 1), stride=1, padding=(0, 1, 0), bias=True),
-			#nn.Conv3d(out_ch, out_ch, kernel_size=(1, 1, 3), stride=1, padding=(0, 0, 1), bias=True),
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
+
+			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 1, 1), stride=1, padding=(1, 0, 0), bias=True), 
+			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 3, 1), stride=1, padding=(0, 1, 0), bias=True),
+			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 1, 3), stride=1, padding=(0, 0, 1), bias=True),
 			nn.LeakyReLU(LRLUGrad, inplace=True),
-			nn.BatchNorm2d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), # FIX ME 3D
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
 		)
 	def forward(self, x):
 		x = self.conv(x)
@@ -44,14 +44,13 @@ class inconv(nn.Module):
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(inconv, self).__init__()
 		self.conv = nn.Sequential(
-			nn.Conv2d(in_ch, out_ch, kernel_size=(1, 1), stride=1, padding=(0, 0), bias=True), # FIX ME 3D
+			nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=True), 
 			nn.LeakyReLU(LRLUGrad, inplace=False), 
-			nn.BatchNorm2d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), # FIX ME 3D
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
 
-			nn.Conv2d(out_ch, out_ch, kernel_size=(3, 1), stride=1, padding=(1, 0), bias=True), # FIX ME 3D
-			nn.Conv2d(out_ch, out_ch, kernel_size=(1, 3), stride=1, padding=(0, 1), bias=True), # FIX ME 3D
+			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True), 
 			nn.LeakyReLU(LRLUGrad, inplace=True),
-			nn.BatchNorm2d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), # FIX ME 3D
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
 		)
 	def forward(self, x):
 		x = self.conv(x)
@@ -59,33 +58,43 @@ class inconv(nn.Module):
 
 
 class down(nn.Module):
-	def __init__(self, in_ch, out_ch):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(down, self).__init__()
 		self.mpconv = nn.Sequential(
-			nn.MaxPool2d(kernel_size=(2, 2)),
-			double_conv(in_ch, out_ch),
+			nn.MaxPool3d(kernel_size=(2, 2, 2)),
+			double_conv(in_ch, out_ch, LRLUGrad, eps, momentum),
 		)
 	def forward(self, x):
 		x = self.mpconv(x)
 		return x
 
 
-class up(nn.Module):
-	def __init__(self, in_ch, out_ch):
-		super(up, self).__init__()
+class up01(nn.Module):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.3):
+		super(up01, self).__init__()
 		self.upconv = nn.Sequential(
 			nn.Upsample(scale_factor=2, mode='nearest'),
-			double_conv(in_ch, out_ch),
+			double_conv(in_ch, out_ch, LRLUGrad, eps, momentum),
 		)
 	def forward(self, x):
 		x = self.upconv(x)
 		return x
 
+class up02(nn.Module):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
+		super(up02, self).__init__()
+		self.upconv = nn.Sequential(
+			nn.Upsample(scale_factor=2, mode='nearest'),
+			double_conv(in_ch, out_ch, LRLUGrad, eps, momentum),
+		)
+	def forward(self, x):
+		x = self.upconv(x)
+		return x
 
 class outconv(nn.Module):
 	def __init__(self, in_ch, out_ch):
 		super(outconv, self).__init__()
-		self.conv = nn.Conv2d(in_ch, out_ch, kernel_size=(1, 1), stride=1, padding=0, bias=True)
+		self.conv = nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=True)
 	def forward(self, x):
 		x = self.conv(x)
 		return x
@@ -138,15 +147,15 @@ class NNModel(nn.Module):
 		self.down3 = down(256, 512)
 		self.down4 = down(512, 1024)
 
-		self.up01 = up(512, 256)
-		self.up02 = up(256, 128)
-		self.up03 = up(128, 64)
+		self.up01 = up01(512, 256)
+		self.up02 = up01(256, 128)
+		self.up03 = up01(128, 64)
 		# self.up04 = up(128, 64)
 		self.outc00 = outconv(64, n_classes)
 
-		self.up11 = up(512, 256)
-		self.up12 = up(256, 128)
-		self.up13 = up(128, 64)
+		self.up11 = up01(512, 256)
+		self.up12 = up01(256, 128)
+		self.up13 = up01(128, 64)
 		# self.up04 = up(128, 64)
 		self.outc11 = outconv(64, n_classes)
 
@@ -180,7 +189,7 @@ class NNModel(nn.Module):
 class CNNTrain():
 	def __init__(self, device_type='cpu'):
 		self.verbose = True
-		self.print_every = 40
+		self.print_every = 3
 		self.device_type = device_type
 		self.device = None
 		self.input_data = None
@@ -194,16 +203,19 @@ class CNNTrain():
 		self.model = None
 		self.train_idx = None
 		self.test_idx = None
-		self.batch_size = 192
+		self.batch_size = 45
 		self.valid_size=0.05
 		self.loader_train = None
 		self.loader_test = None
-		self.lrate_step_size = 10
+		self.lrate_step_size = 5 #updates the learning rate after n epochs according to the schedular 
+		self.op_step_size = 10 #optimiser step size, after n epochs, it changes the optimiser from optimiser1 to optimiser2 
 		self.lr = 1e-2
 		self.momentum = 0.9
 		self.gamma = 0.1
-		self.optimiser = None
-		self.scheduler = None
+		self.optimiser1 = None
+		self.optimiser2 = None
+		self.scheduler1 = None
+		self.scheduler2 = None
 		self.epochs = 250
 		self.train_loss = []
 		self.valid_loss = []
@@ -215,8 +227,8 @@ class CNNTrain():
 	def SetInputData(self, fname):
 		self.input_data = np.load(fname)
 		self.data_shape = self.input_data.shape
-		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-1], self.data_shape[-2]), dtype='float32')
-		self.target_data1[:] = self.input_data[:,0,:,:]
+		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-1], self.data_shape[-2], self.data_shape[-3]), dtype='float32')
+		self.target_data1[:] = self.input_data[:,0,:,:,:]
 	def SetTargetDataReal(self, fname):
 		self.target_data0 = np.load(fname)
 
@@ -226,7 +238,7 @@ class CNNTrain():
 		self.nchannels_expand = self.data_shape[-1]
 		self.image_size = self.data_shape[-1]
 	def SetModel(self, model):
-		self.model = model( 1, 1).to(self.device)
+		self.model = model(1, 1).to(self.device)
 	def SetValidSize(self, valid_size):
 		self.valid_size = valid_size
 	def SplitData(self):
@@ -258,7 +270,7 @@ class CNNTrain():
 
 		data_xyz = torch.utils.data.TensorDataset(dx, dy, dz)
 		
-		trainloader = torch.utils.data.DataLoader(data_xyz,
+		trainloader = DataLoader(data_xyz,
 					   sampler=sampler, shuffle=False, batch_size = self.batch_size) #think about including num_workers for mulit process data loading 
 
 		del datax, datay, dataz, dx, dy, dz, data_xyz
@@ -282,11 +294,45 @@ class CNNTrain():
 		self.momentum = momentum
 	def SetGamma(self, gamma):
 		self.gamma = gamma
-	def SetOptimiser(self):
-		self.optimiser = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum)
-	def SetScheduler(self):
-		self.scheduler = StepLR(self.optimiser, step_size=self.lrate_step_size, gamma=self.gamma)
+
+	def SetOptimiser1(self, optimiser = 'SGD'):
+		if optimiser == 'SGD':
+			self.optimiser1 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum)
+		elif optimiser == 'ADAM':
+			self.optimiser1 = optim.Adam(self.model.parameters(), lr=self.lr, amsgrad=False, eps=1e-10)
+		elif optimiser == 'AdaGrad':
+			self.optimiser1 = optim.Adagrad(self.model.parameters(), lr=self.lr)
+		else: 
+			print('Optimiser 1 not defined')
+
+	def SetOptimiser2(self, optimiser = 'ADAM'):
+		if optimiser == 'SGD':
+			self.optimiser2 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum)
+		elif optimiser == 'ADAM':
+			self.optimiser2 = optim.Adam(self.model.parameters(), lr=self.lr, amsgrad=False, eps=1e-8)
+		elif optimiser == 'AdaGrad':
+			self.optimiser2 = optim.Adagrad(self.model.parameters(), lr=self.lr)
+		else: 
+			print('Optimiser 2 not defined')
 		
+	def SetScheduler1(self, scheduler='StepLR'):
+
+		if scheduler == 'StepLR':
+			self.scheduler1 = ss.StepLR(self.optimiser1, step_size=self.lrate_step_size, gamma=self.gamma)
+		elif scheduler == 'ReduceLROnPlateau':
+			self.scheduler1 = ss.ReduceLROnPlateau(self.optimiser1, mode='min', factor=0.9, patience=100)
+		else: 
+			print('Schedular 1 not defined')
+
+
+	def SetScheduler2(self, scheduler='ReduceLROnPlateau'):
+		if scheduler == 'StepLR':
+			self.scheduler2 = ss.StepLR(self.optimiser1, step_size=self.lrate_step_size, gamma=self.gamma)
+		elif scheduler == 'ReduceLROnPlateau':
+			self.scheduler2 = ss.ReduceLROnPlateau(self.optimiser1, mode='min', factor=0.9, patience=100)
+		else: 
+			print('Scheduler 2 not defined')
+
 	# def pull_out_gpu_fft(self, output):
 	# 	X = self.data_shape[-2]
 	# 	Y= self.data_shape[-1]
@@ -327,42 +373,45 @@ class CNNTrain():
 		return 1. - loss
 	
 	def all_loss(self, output, target, input):
-		X = self.data_shape[-2]
-		Y= self.data_shape[-1]
+		X = self.data_shape[-3]
+		Y= self.data_shape[-2]
+		Z = self.data_shape[-1]
 		X2 = X//2
 		X4 = X//4
 		Y2 = Y//2
 		Y4 = Y//4
+		Z2 =  Z//2
+		Z4 = Z//4
 
-		output0 = torch.zeros(output.shape[0], output.shape[1], X, Y, device=self.device, requires_grad=False)
-		output0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4)] = output
-		target0 = torch.zeros(output.shape[0], output.shape[1], X, Y, device=self.device, requires_grad=False)
-		target0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4)] = target
+		output0 = torch.zeros(output.shape[0], output.shape[1], X, Y, Z, device=self.device, requires_grad=False)
+		output0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4), (Z2 - Z4):(Z2 + Z4)] = output
+		target0 = torch.zeros(output.shape[0], output.shape[1], X, Y, Z, device=self.device, requires_grad=False)
+		target0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4), (Z2 - Z4):(Z2 + Z4)] = target
 
-		loss1 = torch.sqrt(torch.mean((output0[:, 0, :, :] - target0[:, 0, :, :]) ** 2) /
-						   (torch.mean(target0[:, 0, :, :] ** 2)))
-		loss2 = torch.sqrt(torch.mean((output0[:, 1, :, :] - target0[:, 1, :, :]) ** 2) /
-						   (torch.mean(target0[:, 1, :, :] ** 2)))
+		loss1 = torch.sqrt(torch.mean((output0[:, 0, :, :, :] - target0[:, 0, :, :]) ** 2) /
+						   (torch.mean(target0[:, 0, :, :, :] ** 2)))
+		loss2 = torch.sqrt(torch.mean((output0[:, 1, :, :, :] - target0[:, 1, :, :]) ** 2) /
+						   (torch.mean(target0[:, 1, :, :, :] ** 2)))
 
 		#complex output object
 		#get complex object of the output i.e. an object that includes the phase and amplitude
 		#perform fourier transform on the object in order to obtain it in reci space 
 		#compare the reci space output with the reci space input in loss3
-		obj_comp = torch.zeros((output0.shape[0]), 2, X, Y, requires_grad=False, device = self.device) 
+		obj_comp = torch.zeros((output0.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
 
-		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4)] = output[:, 0, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:]))
-		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4)] = output[:, 0, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:]))
+		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
+		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
 
-		obj_comp = obj_comp[:,0,:,:] +1j * obj_comp[:,1,:,:]
+		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
 
-		obj_comp = torch.fft.fftn(obj_comp, dim= (-2,-1))
+		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
 		#amp_out = torch.zeros((output.shape[0], X, Y), requires_grad=False, device=self.device, dtype=float)
-		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:]) **2 + torch.abs(obj_comp[:,:,:]) **2)
+		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2)
 
 		#input has the shape (n,1,X,Y)
 
-		loss3 = self.pcc_loss(amp_out, input) #EDIT for the proper target
+		loss3 = self.pcc_loss(amp_out, input) 
 		alpha, beta, gamma = 1., 1., 4.
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
 
@@ -371,8 +420,8 @@ class CNNTrain():
 	def criterion(self, output, target, input):
 		return self.all_loss(output, target, input)
 
-	def get_lr(self):
-		for param_group in self.optimiser.param_groups:
+	def GetLR(self, optimiser):
+		for param_group in optimiser.param_groups:
 			return param_group['lr']
 
 	def SetNEpochs(self, epochs):
@@ -381,6 +430,8 @@ class CNNTrain():
 	def TrainNN(self):
 		for epoch in range(self.epochs):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
+
+			sw_op_flag = (epoch // self.op_step_size) % 2
 			for ii, loader_batch_train in enumerate(self.loader_train, 0):
 				
 				# get the inputs; data is a list of [inputs, labels]
@@ -390,53 +441,92 @@ class CNNTrain():
 				x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
 
 				# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
-				self.optimiser.zero_grad()
+				# this is potentially causing accumlation of gradients when we are switching from one optimizer to the next. best to set both to zero anyway?
+				# if sw_op_flag == 0:
+				# 	self.optimiser1.zero_grad()
+				# elif sw_op_flag == 1:
+				# 	self.optimiser2.zero_grad()
 				
+				self.optimiser1.zero_grad()
+				#self.optimiser2.zero_grad()
+
 				# forward propagation
 				y_train_predict = self.model.forward(x_train)
 				
 				#define the loss and then backward propagate
-
-				loss1 = self.criterion(y_train_predict, y_train, z_train) #EDIT ME!
+				loss1 = self.criterion(y_train_predict, y_train, z_train)
 				
 				loss1.backward()
+
+				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
+				clip_grad_norm_(self.model.parameters(), max_norm = 1.0, norm_type=2)
+
 				#optimize the weights and biases
-				self.optimiser.step()
+				# if sw_op_flag == 0:
+				# 	self.optimiser1.step()
+				# elif sw_op_flag == 1:
+				# 	self.optimiser2.step()
+
+				self.optimiser1.step()
 
 				train_loss_tmp += loss1.item()
 				
 				# print info if needed
 				if self.verbose:
-					if ii % self.print_every == 0:  # print every 2000 mini-batches
+					if ii % self.print_every == 0: 
 						print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
 
-			# turn off some specific parts of the model for the evaluation with model.eval()
-			self.model.eval()
+			# #update the learning rate
+			# if sw_op_flag == 0:
+			# 	self.scheduler1.step()
+			# 	lr = self.GetLR(self.optimiser1)
+			# 	print('Using Optimiser 1')
+			# elif sw_op_flag == 1:
+			# 	self.scheduler2.step()
+			# 	lr = self.GetLR(self.optimiser2)
+			# 	print('Using Optimiser 2')
+			
+			self.scheduler1.step()
+			lr = self.GetLR(self.optimiser1)
+
+			
+			
 			#validation step
 			with torch.no_grad():
 				valid_loss_tmp = 0.0
-				for jj, loader_batch_test in enumerate(self.loader_test, 0):
+				self.model.eval() # turn off some specific parts of the model for the evaluation with model.eval()
+				for loader_batch_test in self.loader_test:
 					x_test, y_test, z_test = loader_batch_test
 					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
 					y_pred = self.model.forward(x_test)
-					loss2 = self.criterion(y_pred, y_test, z_test) # EDIT ME!!
+					loss2 = self.criterion(y_pred, y_test, z_test)
 					valid_loss_tmp += loss2.item()
+			
+			
+			self.model.train()
 
-		#update the learning rate
-		self.scheduler.step()
-		print(len(self.loader_test))
-		self.train_loss.append(train_loss_tmp / len(self.loader_train))
-		self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
+			print(len(self.loader_test))
+			self.train_loss.append(train_loss_tmp / len(self.loader_train))
+			self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
 
-		# if ii % print_every == 0:                  # print every mini-batches
-		if self.verbose:
-			print('Epoch-loss:: train %.5f  valid %.5f lr %.5f' %(self.train_loss[-1], self.valid_loss[-1], self.get_lr())) #FIXME get_lr
+			if np.isfinite(self.train_loss[-1]):
+				pass
+			else:
+				print('model is breaking')
+				break
+
+			# if ii % print_every == 0:                  # print every mini-batches
+			if self.verbose:
+				print('Epoch-loss:: train %.5f  valid %.5f lr %.5f' %(self.train_loss[-1], self.valid_loss[-1], lr)) 
+				print('-'*20)
 		
-		# save
-		self.SaveModel(epoch)
+			# save
+			if epoch % 50 == 0:
+				self.SaveModel(epoch)
 	##
 	def SaveModel(self, epoch=0):
-		torch.save(self.model.state_dict(), 'checkpoint/' + 'CP{}.pth'.format(epoch+1))
+		torch.save(self.model.state_dict(), 'CP{}.pth'.format(epoch+1))
+		print('Model: \n\n', self.model, '\n')
 	def PlotLoss(self):
 		# plot the validation loss
 		plt.plot(self.train_loss, label='Training loss')
@@ -463,9 +553,9 @@ class CNNTrain():
 
 if __name__ == '__main__':
 	mynn = CNNTrain()
-	mynn.SetDeviceType('cuda')
-	mynn.SetInputData('reci_intes.npy')
-	mynn.SetTargetDataReal('real_obj.npy')
+	mynn.SetDeviceType('cpu')
+	mynn.SetInputData('reci_intensity_3D.npy')
+	mynn.SetTargetDataReal('real_obj_3D.npy')
 	mynn.SetModel(NNModel)
 	mynn.SetValidSize(0.1)
 	mynn.SplitData()
@@ -476,8 +566,10 @@ if __name__ == '__main__':
 	mynn.SetLR(1e-2)
 	mynn.SetMomentum(0.9)
 	mynn.SetGamma(0.1)
-	mynn.SetOptimiser()
-	mynn.SetScheduler()
+	mynn.SetOptimiser1('SGD')
+	mynn.SetOptimiser2('ADAM')
+	mynn.SetScheduler1('StepLR')
+	mynn.SetScheduler2('StepLR')
 	mynn.SetNEpochs(20)
 	mynn.TrainNN()
 	mynn.PlotLoss()
