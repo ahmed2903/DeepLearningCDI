@@ -20,6 +20,8 @@ from torch.nn.utils import clip_grad_norm_, clip_grad_value_
 from torch.utils.dlpack import to_dlpack
 from torch.utils.dlpack import from_dlpack
 
+from time import strftime
+
 
 class double_conv(nn.Module):
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
@@ -219,6 +221,7 @@ class CNNTrain():
 		self.epochs = 250
 		self.train_loss = []
 		self.valid_loss = []
+		self.datestr = ''
 	def SetDeviceType(self, device_type='cpu'):
 		if torch.cuda.is_available() and device_type=='cuda':
 			self.device = torch.device("cuda")
@@ -521,23 +524,26 @@ class CNNTrain():
 				print('-'*20)
 		
 			# save
-			if epoch % 50 == 0:
+			if epoch % (self.epochs -1) == 0:
 				self.SaveModel(epoch)
 	##
 	def SaveModel(self, epoch=0):
-		torch.save(self.model.state_dict(), 'CP{}.pth'.format(epoch+1))
-		print('Model: \n\n', self.model, '\n')
+		torch.save(self.model.state_dict(), 'CP{}'.format(epoch+1)+'self.datestr'+'.pth')
+		
 	def PlotLoss(self):
 		# plot the validation loss
 		plt.plot(self.train_loss, label='Training loss')
 		plt.plot(self.valid_loss, label='Validation loss')
 		plt.legend(frameon=False)
-		plt.savefig('validation_error.png')
+		plt.savefig('validation_error'+'self.datestr'+'.png')
 		plt.show()
 			
 	def SaveParameters(self):
+		
+		self.datestr = strftime("%Y-%m-%d_%H.%M.%S")
 		params = ""
 		params += "Device Type: %s \n"%self.device_type
+		params += "Optimiser: %s \n"%self.optimiser1
 		params += "Validation Size: %1.5e  \n"%self.valid_size
 		params += "Batch Size: %2.6f \n" %self.batch_size
 		params += "Learning Rate: %2.6f \n" %self.lr
@@ -545,17 +551,19 @@ class CNNTrain():
 		params += "Momentum: %d \n" %self.momentum
 		params += "Gamma: %d \n" %self.gamma
 		params += "Number of Epochs: %d \n" %self.epochs
+		params += "-"*20
+		params += 'Model: \n\n', self.model, '\n'
 
-		f = open('CNN_Training_Params.txt', "w")
+		f = open('CNN_Training_Params_'+'self.datstr'+'.txt', "w")
 		f.write(params)
 		f.close()
 
 
 if __name__ == '__main__':
 	mynn = CNNTrain()
-	mynn.SetDeviceType('cpu')
-	mynn.SetInputData('reci_intensity_3D.npy')
-	mynn.SetTargetDataReal('real_obj_3D.npy')
+	mynn.SetDeviceType('cuda')
+	mynn.SetInputData('$HOME/scratch/DeepLearningCDI/reci_intensity.npy')
+	mynn.SetTargetDataReal('$HOME/scratch/DeepLearningCDI/real_obj.npy')
 	mynn.SetModel(NNModel)
 	mynn.SetValidSize(0.1)
 	mynn.SplitData()
@@ -571,6 +579,6 @@ if __name__ == '__main__':
 	mynn.SetScheduler1('StepLR')
 	mynn.SetScheduler2('StepLR')
 	mynn.SetNEpochs(20)
+	mynn.SaveParameters()
 	mynn.TrainNN()
 	mynn.PlotLoss()
-	mynn.SaveParameters()
