@@ -562,8 +562,8 @@ class CNNTrain():
 if __name__ == '__main__':
 	mynn = CNNTrain()
 	mynn.SetDeviceType('cuda')
-	mynn.SetInputData('$HOME/scratch/Run_DL/reci_intensity.npy')
-	mynn.SetTargetDataReal('$HOME/scratch/Run_DL/real_obj.npy')
+	mynn.SetInputData('/home/ahmm1g15/scratch/Run_DL')
+	mynn.SetTargetDataReal('/home/ahmm1g15/scratch/Run_DL')
 	mynn.SetModel(NNModel)
 	mynn.SetValidSize(0.1)
 	mynn.SplitData()
