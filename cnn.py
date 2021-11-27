@@ -462,7 +462,7 @@ class CNNTrain():
 				loss1.backward()
 
 				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
-				clip_grad_norm_(self.model.parameters(), max_norm = 1.0, norm_type=2)
+				#clip_grad_norm_(self.model.parameters(), max_norm = 1.0, norm_type=2)
 
 				#optimize the weights and biases
 				# if sw_op_flag == 0:
@@ -528,14 +528,14 @@ class CNNTrain():
 				self.SaveModel(epoch)
 	##
 	def SaveModel(self, epoch=0):
-		torch.save(self.model.state_dict(), 'CP{}'.format(epoch+1)+'self.datestr'+'.pth')
+		torch.save(self.model.state_dict(), 'CP{}'.format(epoch+1)+self.datestr+'.pth')
 		
 	def PlotLoss(self):
 		# plot the validation loss
 		plt.plot(self.train_loss, label='Training loss')
 		plt.plot(self.valid_loss, label='Validation loss')
 		plt.legend(frameon=False)
-		plt.savefig('validation_error'+'self.datestr'+'.png')
+		plt.savefig('validation_error'+self.datestr+'.png')
 		plt.show()
 			
 	def SaveParameters(self):
@@ -552,7 +552,7 @@ class CNNTrain():
 		params += "Gamma: %d \n" %self.gamma
 		params += "Number of Epochs: %d \n" %self.epochs
 		params += "-"*20
-		params += 'Model: \n\n', self.model, '\n'
+		#params += 'Model: \n\n', self.model, '\n'
 
 		f = open('CNN_Training_Params_'+'self.datstr'+'.txt', "w")
 		f.write(params)
