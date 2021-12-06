@@ -28,14 +28,14 @@ class double_conv(nn.Module):
 		super(double_conv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True), 
-			nn.LeakyReLU(LRLUGrad, inplace=True),
 			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
+			nn.LeakyReLU(LRLUGrad, inplace=True),
 
 			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 1, 1), stride=1, padding=(1, 0, 0), bias=True), 
 			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 3, 1), stride=1, padding=(0, 1, 0), bias=True),
 			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 1, 3), stride=1, padding=(0, 0, 1), bias=True),
-			nn.LeakyReLU(LRLUGrad, inplace=True),
 			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
+			nn.LeakyReLU(LRLUGrad, inplace=True),	
 		)
 	def forward(self, x):
 		x = self.conv(x)
@@ -47,12 +47,12 @@ class inconv(nn.Module):
 		super(inconv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=True), 
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False),
 			nn.LeakyReLU(LRLUGrad, inplace=False), 
-			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
-
+			 
 			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True), 
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False),
 			nn.LeakyReLU(LRLUGrad, inplace=True),
-			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
 		)
 	def forward(self, x):
 		x = self.conv(x)
@@ -161,37 +161,25 @@ class NNModel(nn.Module):
 		# self.up04 = up(128, 64)
 		self.outc11 = outconv(64, n_classes)
 
-		self.dropout = nn.Dropout(p=0.2)
-
 	def forward(self, x):
 		x = self.inconv(x)
 		x = self.down1(x)
-		x = self.dropout(x)
 		x = self.down2(x)
-		x = self.dropout(x)
 		x = self.down3(x)
-		x = self.dropout(x)
 		x = self.down4(x)
-		x = self.dropout(x)
 
 
 		x1 = x[:, 0::2, :, :]
 		x1 = self.up01(x1)
-		x1 = self.dropout(x1)
 		x1 = self.up02(x1)
-		x1 = self.dropout(x1)
 		x1 = self.up03(x1)
-		x1 = self.dropout(x1)
 		# x1 = self.up04(x, x1)
 		x1 = self.outc00(x1)
 
 		x2 = x[:, 1::2, :, :]
 		x2 = self.up11(x2)
-		x2 = self.dropout(x2)
 		x2 = self.up12(x2)
-		x2 = self.dropout(x2)
 		x2 = self.up13(x2)
-		x2 = self.dropout(x2)
 		# x = self.up4(x, x2)
 		x2 = self.outc11(x2)
 
