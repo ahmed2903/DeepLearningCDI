@@ -554,7 +554,7 @@ class CNNTrain():
 		params += "-"*20
 		#params += 'Model: \n\n', self.model, '\n'
 
-		f = open('CNN_Training_Params_'+'self.datstr'+'.txt', "w")
+		f = open('CNN_Training_Params_'+self.datstr+'.txt', "w")
 		f.write(params)
 		f.close()
 
