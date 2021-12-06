@@ -161,24 +161,37 @@ class NNModel(nn.Module):
 		# self.up04 = up(128, 64)
 		self.outc11 = outconv(64, n_classes)
 
+		self.dropout = nn.Dropout(p=0.2)
+
 	def forward(self, x):
 		x = self.inconv(x)
 		x = self.down1(x)
+		x = self.dropout(x)
 		x = self.down2(x)
+		x = self.dropout(x)
 		x = self.down3(x)
+		x = self.dropout(x)
 		x = self.down4(x)
+		x = self.dropout(x)
+
 
 		x1 = x[:, 0::2, :, :]
 		x1 = self.up01(x1)
+		x1 = self.dropout(x1)
 		x1 = self.up02(x1)
+		x1 = self.dropout(x1)
 		x1 = self.up03(x1)
+		x1 = self.dropout(x1)
 		# x1 = self.up04(x, x1)
 		x1 = self.outc00(x1)
 
 		x2 = x[:, 1::2, :, :]
 		x2 = self.up11(x2)
+		x2 = self.dropout(x2)
 		x2 = self.up12(x2)
+		x2 = self.dropout(x2)
 		x2 = self.up13(x2)
+		x2 = self.dropout(x2)
 		# x = self.up4(x, x2)
 		x2 = self.outc11(x2)
 
@@ -554,7 +567,7 @@ class CNNTrain():
 		params += "-"*20
 		#params += 'Model: \n\n', self.model, '\n'
 
-		f = open('CNN_Training_Params_'+self.datstr+'.txt', "w")
+		f = open('CNN_Training_Params_'+self.datestr+'.txt', "w")
 		f.write(params)
 		f.close()
 
