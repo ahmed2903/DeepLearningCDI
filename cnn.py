@@ -411,7 +411,7 @@ class CNNTrain():
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
 		#amp_out = torch.zeros((output.shape[0], X, Y), requires_grad=False, device=self.device, dtype=float)
-		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2)
+		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
 
 		#input has the shape (n,1,X,Y)
 
@@ -434,6 +434,7 @@ class CNNTrain():
 	def TrainNN(self):
 		for epoch in range(self.epochs):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
+			self.model.train()
 
 			sw_op_flag = (epoch // self.op_step_size) % 2
 			for ii, loader_batch_train in enumerate(self.loader_train, 0):
@@ -463,7 +464,7 @@ class CNNTrain():
 				loss1.backward()
 
 				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
-				#clip_grad_norm_(self.model.parameters(), max_norm = 1.0, norm_type=2)
+				clip_grad_norm_(self.model.parameters(), max_norm = 1.0, norm_type=2)
 
 				#optimize the weights and biases
 				# if sw_op_flag == 0:
@@ -507,7 +508,6 @@ class CNNTrain():
 					valid_loss_tmp += loss2.item()
 			
 			
-			self.model.train()
 
 			print(len(self.loader_test))
 			self.train_loss.append(train_loss_tmp / len(self.loader_train))
