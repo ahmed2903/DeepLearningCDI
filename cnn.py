@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.modules.activation import ReLU
 import torch.optim as optim
 from torchsummary import summary
 import torch.optim.lr_scheduler as ss
@@ -289,6 +290,17 @@ class CNNTrain():
 		else:
 			print('error starts here')
 
+	def _InitializeWeights(self, m):
+		if isinstance(m, nn.Conv3d):
+			nn.init.kaiming_uniform_(m.weight.data, mode = 'fan_in', nonlinearity='relu')
+			if m.bias is not None:
+				nn.init.constant_(m.bias.data, 0)
+		elif isinstance(m, nn.BatchNorm3d):
+			nn.init.constant_(m.weight.data, 1)
+			nn.init.constant_(m.bias.data, 0)
+
+	def InitializeWeights(self):
+		self.model.apply(self._InitializeWeights)
 
 	def SetLRStepSize(self, lrate_step_size):
 		self.lrate_step_size = lrate_step_size
@@ -529,6 +541,7 @@ class CNNTrain():
 				self.SaveModel(epoch)
 	##
 	def SaveModel(self, epoch=0):
+		self.datestr = strftime("%Y-%m-%d_%H.%M.%S")
 		torch.save(self.model.state_dict(), 'CP{}'.format(epoch+1)+self.datestr+'.pth')
 		
 	def PlotLoss(self):
@@ -541,7 +554,6 @@ class CNNTrain():
 			
 	def SaveParameters(self):
 		
-		self.datestr = strftime("%Y-%m-%d_%H.%M.%S")
 		params = ""
 		params += "Device Type: %s \n"%self.device_type
 		params += "Optimiser: %s \n"%self.optimiser1
@@ -552,6 +564,8 @@ class CNNTrain():
 		params += "Momentum: %d \n" %self.momentum
 		params += "Gamma: %d \n" %self.gamma
 		params += "Number of Epochs: %d \n" %self.epochs
+		params += "Valdiation loss: %d \n" %self.valid_loss[-1]
+		params += "Training Loss: %d \n" %self.train_loss[-1]
 		params += "-"*20
 		#params += 'Model: \n\n', self.model, '\n'
 
@@ -563,14 +577,15 @@ class CNNTrain():
 if __name__ == '__main__':
 	mynn = CNNTrain()
 	mynn.SetDeviceType('cuda')
-	mynn.SetInputData('/home/ahmm1g15/scratch/Run_DL')
-	mynn.SetTargetDataReal('/home/ahmm1g15/scratch/Run_DL')
+	mynn.SetInputData('reci_intensity.npy')
+	mynn.SetTargetDataReal('real_obj.npy')
 	mynn.SetModel(NNModel)
 	mynn.SetValidSize(0.1)
 	mynn.SplitData()
 	mynn.SetBatchSize(5)
 	mynn.LoadSplitTrain(loadtype='train')
 	mynn.LoadSplitTrain(loadtype='test')
+	mynn.InitializeWeights()
 	mynn.SetLRStepSize(10)
 	mynn.SetLR(1e-2)
 	mynn.SetMomentum(0.9)
@@ -580,6 +595,6 @@ if __name__ == '__main__':
 	mynn.SetScheduler1('StepLR')
 	mynn.SetScheduler2('StepLR')
 	mynn.SetNEpochs(100)
-	mynn.SaveParameters()
 	mynn.TrainNN()
+	mynn.SaveParameters()
 	mynn.PlotLoss()
