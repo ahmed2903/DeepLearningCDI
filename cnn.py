@@ -256,6 +256,7 @@ class CNNTrain():
 		print(len(self.train_idx), len(self.test_idx))
 	def SetBatchSize(self, batch_size):
         	self.batch_size = batch_size
+			
 	def _LoadSplitTrain(self, index):
 		datax = self.input_data[index].astype('float32')
 		datay = self.target_data0[index].astype('float32')
