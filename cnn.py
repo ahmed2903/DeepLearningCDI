@@ -6,6 +6,7 @@ import torch.optim as optim
 from torchsummary import summary
 import torch.optim.lr_scheduler as ss
 from torch.autograd import Variable
+import os
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -25,6 +26,15 @@ from time import strftime
 
 
 class double_conv(nn.Module):
+	"""
+	Main convlutional layer
+	Sequentially applying a 3D convolution followed by a batch normalization and a LeakyRelu activation function
+	This is done twice however, the second second convolution is divided into three parts
+
+	This concludes one layer in the encoder
+
+	Values that can be tuned are: momentum and Grad of the leaky relu 
+	"""
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(double_conv, self).__init__()
 		self.conv = nn.Sequential(
@@ -44,6 +54,9 @@ class double_conv(nn.Module):
 
 
 class inconv(nn.Module):
+	"""
+	Same as the previous convolutional layer, however, the second convolution is summarized in one operation opposed to three
+	"""
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(inconv, self).__init__()
 		self.conv = nn.Sequential(
@@ -61,6 +74,10 @@ class inconv(nn.Module):
 
 
 class down(nn.Module):
+	"""
+	Main encoder part
+	Applying a maxpooling operation followed by the convultional layer
+	"""
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(down, self).__init__()
 		self.mpconv = nn.Sequential(
@@ -73,6 +90,11 @@ class down(nn.Module):
 
 
 class up01(nn.Module):
+	'''
+	One branch for the decoder part
+	Amplitude recosntruction
+	Upsampling operation followed by the convolutional layer
+	'''
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.3):
 		super(up01, self).__init__()
 		self.upconv = nn.Sequential(
@@ -84,6 +106,11 @@ class up01(nn.Module):
 		return x
 
 class up02(nn.Module):
+	'''
+	One branch for the decoder part
+	phase reconstriction
+	upsampling operation followed by the convolutional layer
+	'''
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(up02, self).__init__()
 		self.upconv = nn.Sequential(
@@ -95,6 +122,10 @@ class up02(nn.Module):
 		return x
 
 class outconv(nn.Module):
+	'''
+	Convolutional layer for the final layer of the network
+	only includes one conv3D operation, no maxpooling or leakyrelu
+	'''
 	def __init__(self, in_ch, out_ch):
 		super(outconv, self).__init__()
 		self.conv = nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=True)
@@ -142,6 +173,9 @@ class NNModel__(nn.Module):
 """
 	
 class NNModel(nn.Module):
+	'''
+	summing up all the operations to create the full network
+	'''
 	def __init__(self, n_channels=1, n_classes=1):
 		super(NNModel, self).__init__()
 		self.inconv = inconv(n_channels, 64)
@@ -153,47 +187,43 @@ class NNModel(nn.Module):
 		self.up01 = up01(512, 256)
 		self.up02 = up01(256, 128)
 		self.up03 = up01(128, 64)
-		# self.up04 = up(128, 64)
 		self.outc00 = outconv(64, n_classes)
 
 		self.up11 = up01(512, 256)
 		self.up12 = up01(256, 128)
 		self.up13 = up01(128, 64)
-		# self.up04 = up(128, 64)
 		self.outc11 = outconv(64, n_classes)
 
 	def forward(self, x):
-		x = self.inconv(x)
+		x = self.inconv(x) 
 		x = self.down1(x)
 		x = self.down2(x)
 		x = self.down3(x)
 		x = self.down4(x)
 
 
-		x1 = x[:, 0::2, :, :]
+		x1 = x[:, 0::2, :, :] #decicating half the channels for one branch
 		x1 = self.up01(x1)
 		x1 = self.up02(x1)
 		x1 = self.up03(x1)
-		# x1 = self.up04(x, x1)
 		x1 = self.outc00(x1)
 
-		x2 = x[:, 1::2, :, :]
+		x2 = x[:, 1::2, :, :] #dedicating the other half for the other branch
 		x2 = self.up11(x2)
 		x2 = self.up12(x2)
 		x2 = self.up13(x2)
-		# x = self.up4(x, x2)
 		x2 = self.outc11(x2)
 
-		x1 = torch.relu(x1)
-		x2 = torch.relu(x2)
-		# x2 = torch.clamp(x2, min=0, max=1)
-		x0 = torch.cat((x1, x2), 1)
+		x1 = torch.relu(x1) #activation function in the final layer is a relu opposed to a leakReLU
+		x2 = torch.relu(x2) #activation function in the final layer is a relu opposed to a leakReLU
+		x2 = torch.clamp(x2, min=-3.14, max=3.14) #clamping the phase values to be between -pi and pi 
+		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
 
 		return x0
 class CNNTrain():
 	def __init__(self, device_type='cpu'):
 		self.verbose = True
-		self.print_every = 3
+		self.print_every = 8 
 		self.device_type = device_type
 		self.device = None
 		self.input_data = None
@@ -203,50 +233,79 @@ class CNNTrain():
 		self.nchannels = 1
 		self.nclasses= 1
 		self.nchannels_expand = 64
-		self.image_size = 64
+		self.image_size = 64 
 		self.model = None
 		self.train_idx = None
 		self.test_idx = None
-		self.batch_size = 45
-		self.valid_size=0.05
+		self.batch_size = 16 #number of datasets to be included within one batch -preferrably powers of 2
+		self.valid_size=0.05 #fraction of the training set to be used for validation
 		self.loader_train = None
 		self.loader_test = None
 		self.lrate_step_size = 5 #updates the learning rate after n epochs according to the schedular 
 		self.op_step_size = 10 #optimiser step size, after n epochs, it changes the optimiser from optimiser1 to optimiser2 
-		self.lr = 1e-2
-		self.momentum = 0.9
-		self.gamma = 0.1
+		self.lr = 1e-2 #learning rate for the optimiser steps
+		self.momentum = 0.9 #momentum for the SGD algorithm
+		self.gamma = 0.1 #multiplicative factor for the LR schedular 
 		self.optimiser1 = None
 		self.optimiser2 = None
 		self.scheduler1 = None
 		self.scheduler2 = None
-		self.epochs = 250
+		self.epochs = 250 #number of loops over the entire training set
 		self.train_loss = []
 		self.valid_loss = []
 		self.datestr = ''
+
 	def SetDeviceType(self, device_type='cpu'):
+		"""
+		Sets the device to be used to either a cpu or a gpu if it is available
+		"""
+
 		if torch.cuda.is_available() and device_type=='cuda':
 			self.device = torch.device("cuda")
 		else:
 			self.device = torch.device("cpu")
+
 	def SetInputData(self, fname):
+
+		"""
+		Loading diffraction data of the training set, shape should be (n,1,x,y,z)
+		and creating another version of the data without any channels such that shape (n,x,y,z)
+		"""
+
 		self.input_data = np.load(fname)
 		self.data_shape = self.input_data.shape
 		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-1], self.data_shape[-2], self.data_shape[-3]), dtype='float32')
 		self.target_data1[:] = self.input_data[:,0,:,:,:]
+
 	def SetTargetDataReal(self, fname):
+		"""
+		loads the target data of the training set
+		shape should be (n,2,x//2,y//2,z//2)
+		"""
 		self.target_data0 = np.load(fname)
 
 	def SetDimensions(self):
+		"""
+		function defining the dimenstion of the input data
+		"""
 		self.nchannels = self.data_shape[1]
 		self.nclasses= self.data_shape[1]
 		self.nchannels_expand = self.data_shape[-1]
 		self.image_size = self.data_shape[-1]
 	def SetModel(self, model):
+		"""
+		Selecting the model to be used for the Neural network
+		"""
 		self.model = model(1, 1).to(self.device)
 	def SetValidSize(self, valid_size):
+		"""
+		sets the validation size of the training set
+		"""
 		self.valid_size = valid_size
 	def SplitData(self):
+		"""
+		splits the training set into two sets: one for training and one for vaidation
+		"""
 		num_train = len(self.input_data)
 		print(num_train)
 		indices = list(range(num_train))
@@ -255,9 +314,16 @@ class CNNTrain():
 		self.train_idx, self.test_idx = indices[split:], indices[:split]
 		print(len(self.train_idx), len(self.test_idx))
 	def SetBatchSize(self, batch_size):
+		"""
+		sets the batch size to be used in the training
+		"""
         	self.batch_size = batch_size
 			
 	def _LoadSplitTrain(self, index):
+		"""
+		selects random samples to be used for the validation
+		puts batches of the traning set together
+		"""
 		datax = self.input_data[index].astype('float32')
 		datay = self.target_data0[index].astype('float32')
 		dataz = self.target_data1[index].astype('float32')
@@ -283,7 +349,9 @@ class CNNTrain():
 		return trainloader
 
 	def LoadSplitTrain(self, loadtype='test'):
-
+		"""
+		performs the splitting for the training and the validation sets
+		"""
 		if loadtype == 'train':
 			self.loader_train = self._LoadSplitTrain(self.train_idx)
 		elif loadtype == 'test':
@@ -292,6 +360,13 @@ class CNNTrain():
 			print('error starts here')
 
 	def _InitializeWeights(self, m):
+
+		"""
+		function to initialize the weights and biases in the network
+		values are set per type of layer (conv3D and batchnorm3D)
+		helps avoid exploding gradients
+		"""
+
 		if isinstance(m, nn.Conv3d):
 			nn.init.kaiming_uniform_(m.weight.data, mode = 'fan_in', nonlinearity='relu')
 			if m.bias is not None:
@@ -301,18 +376,40 @@ class CNNTrain():
 			nn.init.constant_(m.bias.data, 0)
 
 	def InitializeWeights(self):
+		"""
+		applied the weight initization to the set network
+		"""
 		self.model.apply(self._InitializeWeights)
 
 	def SetLRStepSize(self, lrate_step_size):
+		"""
+		sets the learning rate step size, i.e. the number of epochs after which the learning rate will update
+		"""
 		self.lrate_step_size = lrate_step_size
 	def SetLR(self, lr):
+		"""
+		sets the learning rate
+		"""
 		self.lr = lr
 	def SetMomentum(self, momentum):
+
+		"""
+		sets the momentum of the SGD algorithm
+		"""
 		self.momentum = momentum
 	def SetGamma(self, gamma):
+		"""
+		update rule for the LR, after n epochs the LR will be multiplied by gamma 
+		"""
 		self.gamma = gamma
 
 	def SetOptimiser1(self, optimiser = 'SGD'):
+
+		"""
+		
+		function to set the optimizer to be used
+		more can be added - available on the pytorch documentation website
+		"""
 		if optimiser == 'SGD':
 			self.optimiser1 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum)
 		elif optimiser == 'ADAM':
@@ -323,6 +420,11 @@ class CNNTrain():
 			print('Optimiser 1 not defined')
 
 	def SetOptimiser2(self, optimiser = 'ADAM'):
+		"""
+		a second optimiser function in case the user wants to alternate between different optimisers
+		the training function needs to be slightly updates in this case 
+		some function are already written for the scheduling and they need to be commented out 
+		"""
 		if optimiser == 'SGD':
 			self.optimiser2 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum)
 		elif optimiser == 'ADAM':
@@ -333,7 +435,11 @@ class CNNTrain():
 			print('Optimiser 2 not defined')
 		
 	def SetScheduler1(self, scheduler='StepLR'):
-
+		"""
+		setting the type of function that the scheduling of the LR should take
+		StepLR just multiplies LR by gamma by n epochs
+		more info is available on the pytorch documentation
+		"""
 		if scheduler == 'StepLR':
 			self.scheduler1 = ss.StepLR(self.optimiser1, step_size=self.lrate_step_size, gamma=self.gamma)
 		elif scheduler == 'ReduceLROnPlateau':
@@ -343,6 +449,10 @@ class CNNTrain():
 
 
 	def SetScheduler2(self, scheduler='ReduceLROnPlateau'):
+		"""
+		second scheduling function in case user wants to alteranate between different scheduling functions 
+		-should not have to do that though-
+		"""
 		if scheduler == 'StepLR':
 			self.scheduler2 = ss.StepLR(self.optimiser1, step_size=self.lrate_step_size, gamma=self.gamma)
 		elif scheduler == 'ReduceLROnPlateau':
@@ -376,12 +486,16 @@ class CNNTrain():
 	# 	return from_dlpack(cx1122.toDlpack())
 
 	def chi_loss(self, output, target):
-		# chi squared error
+		"""
+		function to compute the chi squared error of two sets of data
+		"""
 		loss = torch.mean(torch.abs((output-target))**2)/(torch.mean(target**2)+1e-40)
 		return loss 
 
 	def pcc_loss(self, output, target):
-		# Pearson correlation coefficient
+		"""
+		Pearson correlation coefficient
+		"""
 		x = torch.abs(output)
 		y = torch.abs(target)
 		vx = torch.abs(x - torch.mean(x))
@@ -390,6 +504,17 @@ class CNNTrain():
 		return 1. - loss
 	
 	def all_loss(self, output, target, input):
+
+		"""
+		Function to define the total loss in the training
+		loss in the phase channel is computed (loss2)
+		loss in the amplitude channel is computed (loss1)
+		loss in the fourier transform of the object is computed (loss3)
+
+		all are merged together in loss function 
+
+		user can add their own loss function and call it in critereon function
+		"""
 		X = self.data_shape[-3]
 		Y= self.data_shape[-2]
 		Z = self.data_shape[-1]
@@ -435,16 +560,50 @@ class CNNTrain():
 		return loss
 		
 	def criterion(self, output, target, input):
+		"""
+		calling the desired loss function to be used 
+		"""
 		return self.all_loss(output, target, input)
 
 	def GetLR(self, optimiser):
+		"""
+		a function to record the learning rate as it is updating in the training
+		"""
 		for param_group in optimiser.param_groups:
 			return param_group['lr']
 
 	def SetNEpochs(self, epochs):
+		"""
+		set the number of loops over the entire training data set during the training
+		"""
 		self.epochs = epochs
 
 	def TrainNN(self):
+		"""
+		funciton to perform the training of the network
+
+		a for loop over the data set for desired number of epochs 
+		a second for loop for the batches in the traning data set
+			variable are set to the devive (cpu or cuda)
+			the gradients are all set to zero initialy to avoid accumulation of the gradients
+			the network is used ot predict an output
+			loss function is computed
+			loss is backward propagated and gradients are computed with loss.backward()
+			clipping the gradients in order to avoid exploding gradient problem
+			weights are updated in self.optimiser.step()
+			loss values are recorded 
+
+		lr is updates if condition is satisfied
+
+		validaiton takes place in another for loop
+			model.eval() turns off parts of the network that interfere with the validation
+
+		training error and validation errors are recorded 
+
+		model is saved
+
+		"""
+
 		for epoch in range(self.epochs):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
 			self.model.train()
@@ -542,19 +701,28 @@ class CNNTrain():
 				self.SaveModel(epoch)
 	##
 	def SaveModel(self, epoch=0):
+		"""
+		saving the model
+		"""
 		self.datestr = strftime("%Y-%m-%d_%H.%M.%S")
-		torch.save(self.model.state_dict(), 'CP{}'.format(epoch+1)+self.datestr+'.pth')
+		os.mkdir(self.datestr)
+		torch.save(self.model.state_dict(), self.datestr/'CP{}'.format(epoch+1)+'.pth')
 		
 	def PlotLoss(self):
+		"""
+		plotting the loss values of the training and validations sets per epoch
+		"""
 		# plot the validation loss
 		plt.plot(self.train_loss, label='Training loss')
 		plt.plot(self.valid_loss, label='Validation loss')
 		plt.legend(frameon=False)
-		plt.savefig('validation_error'+self.datestr+'.png')
+		plt.savefig(self.datestr/'validation_error'+'.png')
 		plt.show()
 			
 	def SaveParameters(self):
-		
+		"""
+		saving some of the important parameters in the network
+		"""
 		params = ""
 		params += "Device Type: %s \n"%self.device_type
 		params += "Optimiser: %s \n"%self.optimiser1
@@ -570,7 +738,7 @@ class CNNTrain():
 		params += "-"*20
 		#params += 'Model: \n\n', self.model, '\n'
 
-		f = open('CNN_Training_Params_'+self.datestr+'.txt', "w")
+		f = open(self.datestr/'CNN_Training_Params_'+'.txt', "w")
 		f.write(params)
 		f.close()
 
@@ -595,7 +763,7 @@ if __name__ == '__main__':
 	mynn.SetOptimiser2('ADAM')
 	mynn.SetScheduler1('StepLR')
 	mynn.SetScheduler2('StepLR')
-	mynn.SetNEpochs(100)
+	mynn.SetNEpochs(1)
 	mynn.TrainNN()
 	mynn.SaveParameters()
 	mynn.PlotLoss()
