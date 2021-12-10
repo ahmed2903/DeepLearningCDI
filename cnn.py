@@ -317,7 +317,7 @@ class CNNTrain():
 		"""
 		sets the batch size to be used in the training
 		"""
-        	self.batch_size = batch_size
+		self.batch_size = batch_size
 			
 	def _LoadSplitTrain(self, index):
 		"""
@@ -426,7 +426,7 @@ class CNNTrain():
 		some function are already written for the scheduling and they need to be commented out 
 		"""
 		if optimiser == 'SGD':
-			self.optimiser2 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum)
+			self.optimiser2 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum, nesterov=True)
 		elif optimiser == 'ADAM':
 			self.optimiser2 = optim.Adam(self.model.parameters(), lr=self.lr, amsgrad=False, eps=1e-8)
 		elif optimiser == 'AdaGrad':
@@ -704,7 +704,7 @@ class CNNTrain():
 		"""
 		saving the model
 		"""
-		self.datestr = strftime("%Y-%m-%d_%H.%M.%S")
+		self.datestr = strftime("%m-%d_%H.%M")
 		os.mkdir(self.datestr)
 		torch.save(self.model.state_dict(), self.datestr/'CP{}'.format(epoch+1)+'.pth')
 		
@@ -743,6 +743,49 @@ class CNNTrain():
 		f.close()
 
 
+	def Predict(self, exp_data, trained_network, recon_name, device_type='cuda'):
+		"""
+		exp_data: the 3D diffraction data file
+		trained_network: the trained network file with .pth extension
+		recon_name: name of the reconstruced file 
+		"""
+		expdata = np.load(exp_data)
+		i = expdata.shape[0]
+		j = expdata.shape[1]
+		k = expdata.shape[2]
+
+		torcharray = np.zeros((1,1,i,j,k), dtype=np.double)
+		torcharray[0,0,:,:,:]  = expdata[:,:,:]
+		torcharray = torch.from_numpy(torcharray)
+		
+		trained_net = trained_network
+
+
+		if torch.cuda.is_available() and device_type=='cuda':
+			self.model.load_state_dict(torch.load(trained_net))
+			torcharray = torcharray.to(device = self.device, dtype = torch.float)
+		else:
+			self.model.load_state_dict(torch.load(trained_net, map_location = 'cpu'))
+
+		self.model.eval()
+			
+		with torch.no_grad():
+			sequence = self.model(torcharray)
+
+
+		sequence = sequence.cpu()
+
+		amp = np.zeros((1,i,j,k), dtype=np.double)
+		pha = np.zeros((1,i,j,k), dtype=np.double)
+
+		amp[:] = sequence[0,0,:,:,:]
+		pha[:] = sequence[0,1,:,:,:]
+
+		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
+
+		np.save(recon_name, com)
+
+
 if __name__ == '__main__':
 	mynn = CNNTrain()
 	mynn.SetDeviceType('cuda')
@@ -767,3 +810,4 @@ if __name__ == '__main__':
 	mynn.TrainNN()
 	mynn.SaveParameters()
 	mynn.PlotLoss()
+	mynn.Predict()
