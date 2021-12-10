@@ -769,9 +769,20 @@ class CNNPredict():
 		"""
 		self.model = model(1, 1).to(self.device)
 
-	def SetExpData(self, fname):
+
+	def SetExpData(self, fname, mask=100):
+		"""
+		selects the diffraction data to be used for prediction
+		masks out the noise, by selecting a threshold value below which everything is set to zero
+		normalizes the array : dividing by the maximum value in the array such that all pixels are in range (0,1)
+
+		"""
 		self.expdata = np.load(fname)
-	
+		self.expdata = self.expdata > mask
+
+		maxElement = np.amax(self.expdata)
+
+		self.expdata = self.expdata / maxElement
 		
 	def SetTrainedNN(self, fname):
 		self.trained_network = fname
@@ -850,7 +861,7 @@ if __name__ == '__main__':
 	predict = CNNPredict()
 	predict.SetDeviceType('cuda')
 	predict.SetModel(NNModel)
-	predict.SetExpData('expdata.py')
+	predict.SetExpData('expdata.py', mask=500)
 	predict.SetTrainedNN('CP200.pth')
 	predict.SetOutputFile('output.py')
 	predict.Predict()
