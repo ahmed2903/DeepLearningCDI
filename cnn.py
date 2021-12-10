@@ -742,30 +742,64 @@ class CNNTrain():
 		f.write(params)
 		f.close()
 
+class CNNPredict():
+	def __init__(self, device_type='cuda'):
 
-	def Predict(self, exp_data, trained_network, recon_name, device_type='cuda'):
+		self.expdata = None
+		self.trained_network = None
+		self.output = None
+		self.devive = None
+		self.model = None
+		self.device_type = device_type
+
+
+	def SetDeviceType(self, device_type='cpu'):
+		"""
+		Sets the device to be used to either a cpu or a gpu if it is available
+		"""
+
+		if torch.cuda.is_available() and device_type=='cuda':
+			self.device = torch.device("cuda")
+		else:
+			self.device = torch.device("cpu")
+
+	def SetModel(self, model):
+		"""
+		Selecting the model to be used for the Neural network
+		"""
+		self.model = model(1, 1).to(self.device)
+
+	def SetExpData(self, fname):
+		self.expdata = np.load(fname)
+	
+		
+	def SetTrainedNN(self, fname):
+		self.trained_network = fname
+
+	def SetOutputFile(self, fname):
+		self.output = fname
+
+	def Predict(self):
 		"""
 		exp_data: the 3D diffraction data file
 		trained_network: the trained network file with .pth extension
 		recon_name: name of the reconstruced file 
 		"""
-		expdata = np.load(exp_data)
-		i = expdata.shape[0]
-		j = expdata.shape[1]
-		k = expdata.shape[2]
+
+		i = self.expdata.shape[0]
+		j = self.expdata.shape[1]
+		k = self.expdata.shape[2]
 
 		torcharray = np.zeros((1,1,i,j,k), dtype=np.double)
-		torcharray[0,0,:,:,:]  = expdata[:,:,:]
+		torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
 		torcharray = torch.from_numpy(torcharray)
 		
-		trained_net = trained_network
 
-
-		if torch.cuda.is_available() and device_type=='cuda':
-			self.model.load_state_dict(torch.load(trained_net))
+		if torch.cuda.is_available() and self.device_type=='cuda':
+			self.model.load_state_dict(torch.load(self.trained_network))
 			torcharray = torcharray.to(device = self.device, dtype = torch.float)
 		else:
-			self.model.load_state_dict(torch.load(trained_net, map_location = 'cpu'))
+			self.model.load_state_dict(torch.load(self.trained_network, map_location = 'cpu'))
 
 		self.model.eval()
 			
@@ -783,7 +817,7 @@ class CNNTrain():
 
 		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 
-		np.save(recon_name, com)
+		np.save(self.output, com)
 
 
 if __name__ == '__main__':
@@ -810,4 +844,13 @@ if __name__ == '__main__':
 	mynn.TrainNN()
 	mynn.SaveParameters()
 	mynn.PlotLoss()
-	mynn.Predict()
+
+
+if __name__ == '__main__':
+	predict = CNNPredict()
+	predict.SetDeviceType('cuda')
+	predict.SetModel(NNModel)
+	predict.SetExpData('expdata.py')
+	predict.SetTrainedNN('CP200.pth')
+	predict.SetOutputFile('output.py')
+	predict.Predict()
