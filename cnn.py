@@ -705,8 +705,7 @@ class CNNTrain():
 		saving the model
 		"""
 		self.datestr = strftime("%m-%d_%H.%M")
-		os.mkdir(self.datestr)
-		torch.save(self.model.state_dict(), self.datestr/'CP{}'.format(epoch+1)+'.pth')
+		torch.save(self.model.state_dict(),'CP{}'.format(epoch+1)+'_'+self.datestr+'.pth')
 		
 	def PlotLoss(self):
 		"""
@@ -716,8 +715,8 @@ class CNNTrain():
 		plt.plot(self.train_loss, label='Training loss')
 		plt.plot(self.valid_loss, label='Validation loss')
 		plt.legend(frameon=False)
-		plt.savefig(self.datestr/'validation_error'+'.png')
-		plt.show()
+		plt.savefig('validation_error_'+self.datestr+'.png')
+		#plt.show()
 			
 	def SaveParameters(self):
 		"""
@@ -738,11 +737,15 @@ class CNNTrain():
 		params += "-"*20
 		#params += 'Model: \n\n', self.model, '\n'
 
-		f = open(self.datestr/'CNN_Training_Params_'+'.txt', "w")
+		f = open('CNN_Training_Params_'+self.datestr+'.txt', "w")
 		f.write(params)
 		f.close()
 
 class CNNPredict():
+	"""
+	a class to be used for prediction after obtaining a trained neural network
+	still to be tested
+	"""
 	def __init__(self, device_type='cuda'):
 
 		self.expdata = None
@@ -775,7 +778,7 @@ class CNNPredict():
 		selects the diffraction data to be used for prediction
 		masks out the noise, by selecting a threshold value below which everything is set to zero
 		normalizes the array : dividing by the maximum value in the array such that all pixels are in range (0,1)
-
+		shape of array (x,y,z)
 		"""
 		self.expdata = np.load(fname)
 		self.expdata = self.expdata > mask
@@ -785,16 +788,21 @@ class CNNPredict():
 		self.expdata = self.expdata / maxElement
 		
 	def SetTrainedNN(self, fname):
+		"""
+		loads the trained neural network, must be a .pth file 
+		"""
 		self.trained_network = fname
 
 	def SetOutputFile(self, fname):
+		"""
+		name of the output file, i.e. the reconstructed object
+		"""
 		self.output = fname
 
 	def Predict(self):
 		"""
-		exp_data: the 3D diffraction data file
-		trained_network: the trained network file with .pth extension
-		recon_name: name of the reconstruced file 
+		forward propagates the diffraction pattern through the trained neural network 
+		obtains an output complex object 
 		"""
 
 		i = self.expdata.shape[0]
