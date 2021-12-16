@@ -220,6 +220,7 @@ class NNModel(nn.Module):
 		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
 
 		return x0
+
 class CNNTrain():
 	def __init__(self, device_type='cpu'):
 		self.verbose = True
@@ -274,7 +275,7 @@ class CNNTrain():
 
 		self.input_data = np.load(fname)
 		self.data_shape = self.input_data.shape
-		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-1], self.data_shape[-2], self.data_shape[-3]), dtype='float32')
+		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-1], self.data_shape[-2], self.data_shape[-3]), dtype=np.complex64)
 		self.target_data1[:] = self.input_data[:,0,:,:,:]
 
 	def SetTargetDataReal(self, fname):
@@ -292,6 +293,7 @@ class CNNTrain():
 		self.nclasses= self.data_shape[1]
 		self.nchannels_expand = self.data_shape[-1]
 		self.image_size = self.data_shape[-1]
+	
 	def SetModel(self, model):
 		"""
 		Selecting the model to be used for the Neural network
@@ -313,6 +315,7 @@ class CNNTrain():
 		np.random.shuffle(indices)
 		self.train_idx, self.test_idx = indices[split:], indices[:split]
 		print(len(self.train_idx), len(self.test_idx))
+
 	def SetBatchSize(self, batch_size):
 		"""
 		sets the batch size to be used in the training
@@ -411,12 +414,12 @@ class CNNTrain():
 		more can be added - available on the pytorch documentation website
 		"""
 		if optimiser == 'SGD':
-			self.optimiser1 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum)
+			self.optimiser1 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum, nesterov=True)
 		elif optimiser == 'ADAM':
-			self.optimiser1 = optim.Adam(self.model.parameters(), lr=self.lr, amsgrad=False, eps=1e-10)
+			self.optimiser1 = optim.Adam(self.model.parameters(), lr=self.lr, amsgrad=True, eps=1e-8)
 		elif optimiser == 'AdaGrad':
 			self.optimiser1 = optim.Adagrad(self.model.parameters(), lr=self.lr)
-		else: 
+		else:
 			print('Optimiser 1 not defined')
 
 	def SetOptimiser2(self, optimiser = 'ADAM'):
@@ -428,7 +431,7 @@ class CNNTrain():
 		if optimiser == 'SGD':
 			self.optimiser2 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum, nesterov=True)
 		elif optimiser == 'ADAM':
-			self.optimiser2 = optim.Adam(self.model.parameters(), lr=self.lr, amsgrad=False, eps=1e-8)
+			self.optimiser2 = optim.Adam(self.model.parameters(), lr=self.lr, amsgrad=True, eps=1e-8)
 		elif optimiser == 'AdaGrad':
 			self.optimiser2 = optim.Adagrad(self.model.parameters(), lr=self.lr)
 		else: 
@@ -443,7 +446,7 @@ class CNNTrain():
 		if scheduler == 'StepLR':
 			self.scheduler1 = ss.StepLR(self.optimiser1, step_size=self.lrate_step_size, gamma=self.gamma)
 		elif scheduler == 'ReduceLROnPlateau':
-			self.scheduler1 = ss.ReduceLROnPlateau(self.optimiser1, mode='min', factor=0.9, patience=100)
+			self.scheduler1 = ss.ReduceLROnPlateau(self.optimiser1, mode='min', factor=0.5, patience=10)
 		else: 
 			print('Schedular 1 not defined')
 
@@ -456,7 +459,7 @@ class CNNTrain():
 		if scheduler == 'StepLR':
 			self.scheduler2 = ss.StepLR(self.optimiser1, step_size=self.lrate_step_size, gamma=self.gamma)
 		elif scheduler == 'ReduceLROnPlateau':
-			self.scheduler2 = ss.ReduceLROnPlateau(self.optimiser1, mode='min', factor=0.9, patience=100)
+			self.scheduler2 = ss.ReduceLROnPlateau(self.optimiser1, mode='min', factor=0.5, patience=10)
 		else: 
 			print('Scheduler 2 not defined')
 
@@ -609,6 +612,7 @@ class CNNTrain():
 			self.model.train()
 
 			sw_op_flag = (epoch // self.op_step_size) % 2
+
 			for ii, loader_batch_train in enumerate(self.loader_train, 0):
 				
 				# get the inputs; data is a list of [inputs, labels]
@@ -619,10 +623,6 @@ class CNNTrain():
 
 				# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
 				# this is potentially causing accumlation of gradients when we are switching from one optimizer to the next. best to set both to zero anyway?
-				# if sw_op_flag == 0:
-				# 	self.optimiser1.zero_grad()
-				# elif sw_op_flag == 1:
-				# 	self.optimiser2.zero_grad()
 				
 				self.optimiser1.zero_grad()
 				#self.optimiser2.zero_grad()
@@ -636,7 +636,7 @@ class CNNTrain():
 				loss1.backward()
 
 				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
-				clip_grad_norm_(self.model.parameters(), max_norm = 1.0, norm_type=2)
+				clip_grad_norm_(self.model.parameters(), max_norm = 2.0, norm_type=2)
 
 				#optimize the weights and biases
 				# if sw_op_flag == 0:
@@ -653,7 +653,7 @@ class CNNTrain():
 					if ii % self.print_every == 0: 
 						print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
 
-			# #update the learning rate
+			#update the learning rate
 			# if sw_op_flag == 0:
 			# 	self.scheduler1.step()
 			# 	lr = self.GetLR(self.optimiser1)
