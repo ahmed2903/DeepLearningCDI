@@ -171,7 +171,95 @@ class NNModel__(nn.Module):
 		xout = torch.cat((x0, x1), 1)
 		return xout
 """
-	
+
+class NNcoder(nn.Module):
+	def __init__(self, n_channels=1, n_cha_lay=2):
+		super(NNcoder, self).__init__()
+		nn = int(n_cha_lay)  # dimensional of the model
+		self.inc = inconv(n_channels, 32 * nn)
+		self.down1 = down(32 * nn, 64 * nn)
+		self.down2 = down(64 * nn, 128 * nn)
+		self.down3 = down(128 * nn, 256 * nn)
+		self.down4 = down(256 * nn, 512 * nn)
+
+	def forward(self, x):
+		x = self.inc(x)
+		x = self.down1(x)
+		x = self.down2(x)
+		x = self.down3(x)
+		x = self.down4(x)
+
+		# x = self.dropout(x)
+
+		return x
+
+class NNampp(nn.Module):
+	def __init__(self, n_classes=1, n_cha_lay=2):
+		super(NNampp, self).__init__()
+
+		nn = n_cha_lay  # dimensional of the model
+
+		self.up10 = up01(np.int(512 * nn / 2), np.int(256 * nn / 2))
+		self.up20 = up01(np.int(256 * nn / 2), np.int(128 * nn / 2))
+		self.up30 = up01(np.int(128 * nn / 2), np.int(64 * nn / 2))
+		# self.up40 = up01(np.int(64 * nn / 2), np.int(32 * nn / 2))
+		self.outc1 = outconv(np.int(64 * nn / 2), n_classes)
+
+	def forward(self, x11):
+		# x11 = self.dropout(x11)
+
+		x11 = self.up10(x11)
+		x11 = self.up20(x11)
+		x11 = self.up30(x11)
+		x11 = self.outc1(x11)
+
+		x11 = F.relu(x11, inplace=False)
+
+		return x11
+
+class NNphaa(nn.Module):
+	def __init__(self, n_classes=1, n_cha_lay=2):
+		super(NNphaa, self).__init__()
+
+		nn = n_cha_lay  # dimensional of the model
+
+		self.up11 = up02(np.int(512 * nn / 2), np.int(256 * nn / 2))
+		self.up21 = up02(np.int(256 * nn / 2), np.int(128 * nn / 2))
+		self.up31 = up02(np.int(128 * nn / 2), np.int(64 * nn / 2))
+
+		self.outc2 = outconv(np.int(64 * nn / 2), n_classes)
+
+	def forward(self, x22):
+        # x22 = self.dropout(x22)
+
+		x22 = self.up11(x22)
+		x22 = self.up21(x22)
+		x22 = self.up31(x22)
+
+		x22 = self.outc2(x22)
+		x22 = F.relu(x22, inplace=False)
+
+		return x22
+
+class NNPhase(nn.Module):
+	with torch.autograd.set_detect_anomaly(True):
+		def __init__(self, nn=2):
+			super(NNPhase, self).__init__()
+
+			self.coder = NNcoder(n_cha_lay=nn)
+			self.aamp = NNampp(n_cha_lay=nn)
+			self.ppha = NNphaa(n_cha_lay=nn)
+
+		def forward(self, x):
+			x = self.coder(x)
+			x11 = x[:, 0::2, :, :]
+			x22 = x[:, 1::2, :, :]
+			x11 = self.aamp(x11)
+			x22 = self.ppha(x22)
+			x00 = torch.cat((x11, x22), 1)
+
+			return x00
+
 class NNModel(nn.Module):
 	'''
 	summing up all the operations to create the full network
@@ -243,8 +331,9 @@ class CNNTrain():
 		self.loader_train = None
 		self.loader_test = None
 		self.lrate_step_size = 5 #updates the learning rate after n epochs according to the schedular 
-		self.op_step_size = 10 #optimiser step size, after n epochs, it changes the optimiser from optimiser1 to optimiser2 
-		self.lr = 1e-2 #learning rate for the optimiser steps
+		self.op_step_size = 50 #optimiser step size, after n epochs, it changes the optimiser from optimiser1 to optimiser2 
+		self.lr01 = 1e-2 #learning rate for the optimiser steps
+		self.lr02 = 1e-4
 		self.momentum = 0.9 #momentum for the SGD algorithm
 		self.gamma = 0.1 #multiplicative factor for the LR schedular 
 		self.optimiser1 = None
@@ -298,7 +387,7 @@ class CNNTrain():
 		"""
 		Selecting the model to be used for the Neural network
 		"""
-		self.model = model(1, 1).to(self.device)
+		self.model = model(nn=2).to(self.device)
 	def SetValidSize(self, valid_size):
 		"""
 		sets the validation size of the training set
@@ -371,7 +460,7 @@ class CNNTrain():
 		"""
 
 		if isinstance(m, nn.Conv3d):
-			nn.init.kaiming_uniform_(m.weight.data, mode = 'fan_in', nonlinearity='relu')
+			nn.init.xavier_normal_(m.weight.data, nonlinearity='leaky_relu')
 			if m.bias is not None:
 				nn.init.constant_(m.bias.data, 0)
 		elif isinstance(m, nn.BatchNorm3d):
@@ -384,18 +473,33 @@ class CNNTrain():
 		"""
 		self.model.apply(self._InitializeWeights)
 
+	def InitializeWeights2(self):
+		for p in self.model.aamp.parameters():
+			p.data.normal_(0.02,0.01)
+			# p.weight,data.normal_(0.02,0.01)
+			# p.bias.data.fill_(0)
+			# p.data.fill_(0.02)
+		for p in self.model.ppha.parameters():
+			p.data.normal_(0.010, 0.010)
+			# p.data.fill_(0.02)
+			# p.data.uniform_(0.020, 0.05)
+			# print(p)	
+
+	def InitializeWeightsPre(self, filename):
+		self.model.load_state_dict(torch.load(filename))
+
 	def SetLRStepSize(self, lrate_step_size):
 		"""
 		sets the learning rate step size, i.e. the number of epochs after which the learning rate will update
 		"""
 		self.lrate_step_size = lrate_step_size
-	def SetLR(self, lr):
+	def SetLR(self, lr01, lr02):
 		"""
 		sets the learning rate
 		"""
-		self.lr = lr
+		self.lr01 = lr01
+		self.lr02 = lr02
 	def SetMomentum(self, momentum):
-
 		"""
 		sets the momentum of the SGD algorithm
 		"""
@@ -407,18 +511,29 @@ class CNNTrain():
 		self.gamma = gamma
 
 	def SetOptimiser1(self, optimiser = 'SGD'):
-
 		"""
-		
 		function to set the optimizer to be used
 		more can be added - available on the pytorch documentation website
 		"""
 		if optimiser == 'SGD':
-			self.optimiser1 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum, nesterov=True)
+			self.optimiser1 = optim.SGD([
+										{'params': self.model.coder.parameters()}, 
+										{'params': self.model.aamp.parameters(), 'lr': self.lr01 * 1.0}, 
+										{'params': self.model.ppha.parameters(), 'lr': self.lr01 * 1.0}
+										], lr = self.lr01 * 2.0, momentum=self.momentum, nesterov=False)
+				
 		elif optimiser == 'ADAM':
-			self.optimiser1 = optim.Adam(self.model.parameters(), lr=self.lr, amsgrad=True, eps=1e-8)
+			self.optimiser1 = optim.Adam(self.model.parameters(), lr=self.lr01, amsgrad=True, eps=1e-8)
 		elif optimiser == 'AdaGrad':
-			self.optimiser1 = optim.Adagrad(self.model.parameters(), lr=self.lr)
+			self.optimiser1 = optim.Adagrad(self.model.parameters(), lr=self.lr01)
+		elif optimiser == 'RMSprop':
+			self.optimiser1 = optim.RMSprop(self.model.parameters(), lr=self.lr01, alpha=0.99, eps=1e-08, weight_decay=0, momentum=self.momentum, centered=False)
+		elif optimiser == 'ASGD':
+			self.optimiser1 = optim.ASGD([
+										{'params': self.model.coder.parameters()}, 
+										{'params': self.model.aamp.parameters(), 'lr': self.lr01 * 1.0}, 
+										{'params': self.model.ppha.parameters(), 'lr': self.lr01* 1.0}
+										], lr = self.lr01 * 2.0)
 		else:
 			print('Optimiser 1 not defined')
 
@@ -429,11 +544,11 @@ class CNNTrain():
 		some function are already written for the scheduling and they need to be commented out 
 		"""
 		if optimiser == 'SGD':
-			self.optimiser2 = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.momentum, nesterov=True)
+			self.optimiser2 = optim.SGD(self.model.parameters(), lr=self.lr02, momentum=self.momentum, nesterov=True)
 		elif optimiser == 'ADAM':
-			self.optimiser2 = optim.Adam(self.model.parameters(), lr=self.lr, amsgrad=True, eps=1e-8)
+			self.optimiser2 = optim.Adam(self.model.parameters(), lr=self.lr02, amsgrad=True, eps=1e-8)
 		elif optimiser == 'AdaGrad':
-			self.optimiser2 = optim.Adagrad(self.model.parameters(), lr=self.lr)
+			self.optimiser2 = optim.Adagrad(self.model.parameters(), lr=self.lr02)
 		else: 
 			print('Optimiser 2 not defined')
 		
@@ -546,7 +661,7 @@ class CNNTrain():
 
 		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
 		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
-
+ 
 		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
 
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
@@ -636,15 +751,17 @@ class CNNTrain():
 				loss1.backward()
 
 				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
-				clip_grad_norm_(self.model.parameters(), max_norm = 2.0, norm_type=2)
+				clip_grad_norm_(self.model.coder.parameters(), 2)
+				clip_grad_norm_(self.model.ppha.parameters(), 2)
+				clip_grad_norm_(self.model.aamp.parameters(), 1.25)
 
 				#optimize the weights and biases
-				# if sw_op_flag == 0:
-				# 	self.optimiser1.step()
-				# elif sw_op_flag == 1:
-				# 	self.optimiser2.step()
+				if sw_op_flag == 0:
+					self.optimiser1.step()
+				elif sw_op_flag == 1:
+					self.optimiser2.step()
 
-				self.optimiser1.step()
+				#self.optimiser1.step()
 
 				train_loss_tmp += loss1.item()
 				
@@ -654,19 +771,17 @@ class CNNTrain():
 						print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
 
 			#update the learning rate
-			# if sw_op_flag == 0:
-			# 	self.scheduler1.step()
-			# 	lr = self.GetLR(self.optimiser1)
-			# 	print('Using Optimiser 1')
-			# elif sw_op_flag == 1:
-			# 	self.scheduler2.step()
-			# 	lr = self.GetLR(self.optimiser2)
-			# 	print('Using Optimiser 2')
+			if sw_op_flag == 0:
+				self.scheduler1.step()
+				lr = self.GetLR(self.optimiser1)
+				print('Using Optimiser 1')
+			elif sw_op_flag == 1:
+				self.scheduler2.step()
+				lr = self.GetLR(self.optimiser2)
+				print('Using Optimiser 2')
 			
-			self.scheduler1.step()
-			lr = self.GetLR(self.optimiser1)
-
-			
+			#self.scheduler1.step()
+			#lr = self.GetLR(self.optimiser1)
 			
 			#validation step
 			with torch.no_grad():
@@ -679,11 +794,12 @@ class CNNTrain():
 					loss2 = self.criterion(y_pred, y_test, z_test)
 					valid_loss_tmp += loss2.item()
 			
-			
-
 			print(len(self.loader_test))
 			self.train_loss.append(train_loss_tmp / len(self.loader_train))
 			self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
+
+			# self.scheduler1.step(self.valid_loss[-1])
+			# lr = self.GetLR(self.optimiser1)
 
 			if np.isfinite(self.train_loss[-1]):
 				pass
@@ -727,7 +843,7 @@ class CNNTrain():
 		params += "Optimiser: %s \n"%self.optimiser1
 		params += "Validation Size: %1.5e  \n"%self.valid_size
 		params += "Batch Size: %2.6f \n" %self.batch_size
-		params += "Learning Rate: %2.6f \n" %self.lr
+		params += "Learning Rate: %2.6f \n" %self.lr01
 		params += "Learning Rate Step Size: %2.6f \n" %self.lrate_step_size
 		params += "Momentum: %d \n" %self.momentum
 		params += "Gamma: %d \n" %self.gamma
@@ -824,12 +940,11 @@ class CNNPredict():
 			
 		with torch.no_grad():
 			sequence = self.model(torcharray)
-
-
+			
 		sequence = sequence.cpu()
 
-		amp = np.zeros((1,i,j,k), dtype=np.double)
-		pha = np.zeros((1,i,j,k), dtype=np.double)
+		amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
+		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
 
 		amp[:] = sequence[0,0,:,:,:]
 		pha[:] = sequence[0,1,:,:,:]
@@ -852,7 +967,7 @@ if __name__ == '__main__':
 	mynn.LoadSplitTrain(loadtype='test')
 	mynn.InitializeWeights()
 	mynn.SetLRStepSize(10)
-	mynn.SetLR(1e-2)
+	mynn.SetLR(1e-2,1e-4)
 	mynn.SetMomentum(0.9)
 	mynn.SetGamma(0.1)
 	mynn.SetOptimiser1('SGD')
