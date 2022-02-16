@@ -38,13 +38,13 @@ class double_conv(nn.Module):
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(double_conv, self).__init__()
 		self.conv = nn.Sequential(
-			nn.Conv3d(in_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True), 
+			nn.Conv3d(in_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=False), 
 			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
 			nn.LeakyReLU(LRLUGrad, inplace=True),
 
-			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 1, 1), stride=1, padding=(1, 0, 0), bias=True), 
-			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 3, 1), stride=1, padding=(0, 1, 0), bias=True),
-			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 1, 3), stride=1, padding=(0, 0, 1), bias=True),
+			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 1, 1), stride=1, padding=(1, 0, 0), bias=False), 
+			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 3, 1), stride=1, padding=(0, 1, 0), bias=False),
+			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 1, 3), stride=1, padding=(0, 0, 1), bias=False),
 			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
 			nn.LeakyReLU(LRLUGrad, inplace=True),	
 		)
@@ -60,11 +60,11 @@ class inconv(nn.Module):
 	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(inconv, self).__init__()
 		self.conv = nn.Sequential(
-			nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=True), 
+			nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=False), 
 			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False),
 			nn.LeakyReLU(LRLUGrad, inplace=False), 
 			 
-			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True), 
+			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=False), 
 			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False),
 			nn.LeakyReLU(LRLUGrad, inplace=True),
 		)
@@ -336,6 +336,7 @@ class CNNTrain():
 		self.lr02 = 1e-4
 		self.momentum = 0.9 #momentum for the SGD algorithm
 		self.gamma = 0.1 #multiplicative factor for the LR schedular 
+		self.scheduler = 'StepLR'
 		self.optimiser1 = None
 		self.optimiser2 = None
 		self.scheduler1 = None
@@ -364,7 +365,7 @@ class CNNTrain():
 
 		self.input_data = np.load(fname)
 		self.data_shape = self.input_data.shape
-		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-1], self.data_shape[-2], self.data_shape[-3]), dtype=np.complex64)
+		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-1], self.data_shape[-2], self.data_shape[-3]), dtype='float64')
 		self.target_data1[:] = self.input_data[:,0,:,:,:]
 
 	def SetTargetDataReal(self, fname):
@@ -416,9 +417,9 @@ class CNNTrain():
 		selects random samples to be used for the validation
 		puts batches of the traning set together
 		"""
-		datax = self.input_data[index].astype('float32')
-		datay = self.target_data0[index].astype('float32')
-		dataz = self.target_data1[index].astype('float32')
+		datax = self.input_data[index].astype('float64') 
+		datay = self.target_data0[index].astype('float64')
+		dataz = self.target_data1[index].astype('float64')
 		
 		num_train = len(datax)
 
@@ -460,7 +461,7 @@ class CNNTrain():
 		"""
 
 		if isinstance(m, nn.Conv3d):
-			nn.init.xavier_normal_(m.weight.data, nonlinearity='leaky_relu')
+			nn.init.xavier_normal_(m.weight.data)
 			if m.bias is not None:
 				nn.init.constant_(m.bias.data, 0)
 		elif isinstance(m, nn.BatchNorm3d):
@@ -474,13 +475,15 @@ class CNNTrain():
 		self.model.apply(self._InitializeWeights)
 
 	def InitializeWeights2(self):
+		for p in self.model.parameters():
+			p.data.normal_(0.02,0.01)
 		for p in self.model.aamp.parameters():
 			p.data.normal_(0.02,0.01)
 			# p.weight,data.normal_(0.02,0.01)
 			# p.bias.data.fill_(0)
 			# p.data.fill_(0.02)
 		for p in self.model.ppha.parameters():
-			p.data.normal_(0.010, 0.010)
+			p.data.normal_(0.010, 0.00750)
 			# p.data.fill_(0.02)
 			# p.data.uniform_(0.020, 0.05)
 			# print(p)	
@@ -560,8 +563,10 @@ class CNNTrain():
 		"""
 		if scheduler == 'StepLR':
 			self.scheduler1 = ss.StepLR(self.optimiser1, step_size=self.lrate_step_size, gamma=self.gamma)
+			self.scheduler = 'StepLR'
 		elif scheduler == 'ReduceLROnPlateau':
-			self.scheduler1 = ss.ReduceLROnPlateau(self.optimiser1, mode='min', factor=0.5, patience=10)
+			self.scheduler1 = ss.ReduceLROnPlateau(self.optimiser1, mode='min', factor=0.5, patience=5)
+			self.scheduler = "ReduceLROnPlateau"
 		else: 
 			print('Schedular 1 not defined')
 
@@ -648,9 +653,9 @@ class CNNTrain():
 		target0 = torch.zeros(output.shape[0], output.shape[1], X, Y, Z, device=self.device, requires_grad=False)
 		target0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4), (Z2 - Z4):(Z2 + Z4)] = target
 
-		loss1 = torch.sqrt(torch.mean((output0[:, 0, :, :, :] - target0[:, 0, :, :]) ** 2) /
+		loss1 = torch.sqrt(torch.mean((output0[:, 0, :, :, :] - target0[:, 0, :, :,:]) ** 2) /
 						   (torch.mean(target0[:, 0, :, :, :] ** 2)))
-		loss2 = torch.sqrt(torch.mean((output0[:, 1, :, :, :] - target0[:, 1, :, :]) ** 2) /
+		loss2 = torch.sqrt(torch.mean((output0[:, 1, :, :, :] - target0[:, 1, :, :,:]) ** 2) /
 						   (torch.mean(target0[:, 1, :, :, :] ** 2)))
 
 		#complex output object
@@ -663,25 +668,58 @@ class CNNTrain():
 		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
  
 		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
+		
 
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
-		#amp_out = torch.zeros((output.shape[0], X, Y), requires_grad=False, device=self.device, dtype=float)
-		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+		#amp_out = torch.zeros((output.shape[0], X, Y, Z), requires_grad=False, device=self.device, dtype=float)
+		amp_out = torch.abs(obj_comp)
 
-		#input has the shape (n,1,X,Y)
+		#input has the shape (n,1,X,Y,Z)
 
 		loss3 = self.pcc_loss(amp_out, input) 
 		alpha, beta, gamma = 1., 1., 4.
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
 
 		return loss
+	
+	def one_loss(self, output, input):
+
+		"A loss function for when there is no target, and only the experimental diffraction input"
+
+		X = 64
+		Y= 64
+		Z = 64
+		X2 = X//2
+		X4 = X//4
+		Y2 = Y//2
+		Y4 = Y//4
+		Z2 =  Z//2
+		Z4 = Z//4
+
+		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 	
+
+		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
+		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
+ 
+		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
+
+		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
+
+		amp_out = torch.abs(obj_comp)
+
+		loss = self.pcc_loss(amp_out, input) 
+
+		return loss
+
 		
 	def criterion(self, output, target, input):
-		"""
+		""" 
 		calling the desired loss function to be used 
 		"""
 		return self.all_loss(output, target, input)
+
+		#return self.one_loss(output, input)
 
 	def GetLR(self, optimiser):
 		"""
@@ -722,84 +760,348 @@ class CNNTrain():
 
 		"""
 
+		def TrainLR():
+			for epoch in range(self.epochs):  # loop over the dataset multiple times
+				train_loss_tmp = 0.0
+				self.model.train()
+
+				sw_op_flag = (epoch // self.op_step_size) % 2
+
+				for ii, loader_batch_train in enumerate(self.loader_train, 0):
+					
+					# get the inputs; data is a list of [inputs, labels]
+					# x_train = input
+					# y_train = target 
+					x_train, y_train, z_train = loader_batch_train
+					x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
+
+
+
+					# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
+					# this is potentially causing accumlation of gradients when we are switching from one optimizer to the next. best to set both to zero anyway?
+					
+					#self.optimiser1.zero_grad()
+					#self.optimiser2.zero_grad()
+					for param in self.model.parameters():
+						param.grad = None
+
+
+					#forward propagation
+					y_train_predict = self.model.forward(x_train)
+
+					#define the loss and then backward propagate
+					loss1 = self.criterion(y_train_predict, y_train, z_train)
+					
+					loss1.backward()
+
+					#incorporate a clip on the values of the gradients, to avoid exploding gradients 
+					clip_grad_norm_(self.model.coder.parameters(), 2)
+					clip_grad_norm_(self.model.ppha.parameters(), 2)
+					clip_grad_norm_(self.model.aamp.parameters(), 1.25)
+
+					#optimize the weights and biases
+					# if sw_op_flag == 0:
+					# 	self.optimiser1.step()
+					# elif sw_op_flag == 1:
+					# 	self.optimiser2.step()
+
+					self.optimiser1.step()
+
+					train_loss_tmp += loss1.item()
+					
+					# print info if needed
+					if self.verbose:
+						if ii % self.print_every == 0: 
+							print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
+
+				#update the learning rate
+				# if sw_op_flag == 0:
+				# 	self.scheduler1.step()
+				# 	lr = self.GetLR(self.optimiser1)
+				# 	print('Using Optimiser 1')
+				# elif sw_op_flag == 1:
+				# 	self.scheduler2.step()
+				# 	lr = self.GetLR(self.optimiser2)
+				# 	print('Using Optimiser 2')
+				
+				self.scheduler1.step()
+				lr = self.GetLR(self.optimiser1)
+				
+				#validation step
+				with torch.no_grad():
+					valid_loss_tmp = 0.0
+					self.model.eval() # turn off some specific parts of the model for the evaluation with model.eval()
+					for loader_batch_test in self.loader_test:
+						x_test, y_test, z_test = loader_batch_test
+						x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
+						y_pred = self.model.forward(x_test)
+						loss2 = self.criterion(y_pred, y_test, z_test)
+						valid_loss_tmp += loss2.item()
+				
+				print(len(self.loader_test))
+				self.train_loss.append(train_loss_tmp / len(self.loader_train))
+				self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
+
+				if np.isfinite(self.train_loss[-1]):
+					pass
+				else:
+					print('model is breaking')
+					break
+
+				# if ii % print_every == 0:                  # print every mini-batches
+				if self.verbose:
+					print('Epoch-loss:: train %.5f  valid %.5f lr %.5f' %(self.train_loss[-1], self.valid_loss[-1], lr)) 
+					print('-'*20)
+			
+				# save
+				if epoch % (self.epochs -1) == 0:
+					self.SaveModel(epoch)
+
+		def TrainRLROP():
+
+			for epoch in range(self.epochs):  # loop over the dataset multiple times
+				train_loss_tmp = 0.0
+				self.model.train()
+
+				sw_op_flag = (epoch // self.op_step_size) % 2
+
+				for ii, loader_batch_train in enumerate(self.loader_train, 0):
+					
+					# get the inputs; data is a list of [inputs, labels]
+					# x_train = input
+					# y_train = target 
+					x_train, y_train, z_train = loader_batch_train
+					x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
+
+					# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
+					# this is potentially causing accumlation of gradients when we are switching from one optimizer to the next. best to set both to zero anyway?
+					
+					#self.optimiser1.zero_grad()
+					#self.optimiser2.zero_grad()
+					for param in self.model.parameters():
+						param.grad = None
+
+
+					#forward propagation
+					y_train_predict = self.model.forward(x_train)
+
+					#define the loss and then backward propagate
+					loss1 = self.criterion(y_train_predict, y_train, z_train)
+					
+					loss1.backward()
+
+					#incorporate a clip on the values of the gradients, to avoid exploding gradients 
+					clip_grad_norm_(self.model.coder.parameters(), 2)
+					clip_grad_norm_(self.model.ppha.parameters(), 2)
+					clip_grad_norm_(self.model.aamp.parameters(), 1.25)
+
+					#optimize the weights and biases
+					# if sw_op_flag == 0:
+					# 	self.optimiser1.step()
+					# elif sw_op_flag == 1:
+					# 	self.optimiser2.step()
+
+					self.optimiser1.step()
+
+					train_loss_tmp += loss1.item()
+					
+					# print info if needed
+					if self.verbose:
+						if ii % self.print_every == 0: 
+							print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
+
+				#update the learning rate
+				# if sw_op_flag == 0:
+				# 	self.scheduler1.step()
+				# 	lr = self.GetLR(self.optimiser1)
+				# 	print('Using Optimiser 1')
+				# elif sw_op_flag == 1:
+				# 	self.scheduler2.step()
+				# 	lr = self.GetLR(self.optimiser2)
+				# 	print('Using Optimiser 2')
+				
+				#validation step
+				with torch.no_grad():
+					valid_loss_tmp = 0.0
+					self.model.eval() # turn off some specific parts of the model for the evaluation with model.eval()
+					for loader_batch_test in self.loader_test:
+						x_test, y_test, z_test = loader_batch_test
+						x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
+						y_pred = self.model.forward(x_test)
+						loss2 = self.criterion(y_pred, y_test, z_test)
+						valid_loss_tmp += loss2.item()
+				
+				print(len(self.loader_test))
+				self.train_loss.append(train_loss_tmp / len(self.loader_train))
+				self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
+
+				self.scheduler1.step(self.valid_loss[-1])
+				lr = self.GetLR(self.optimiser1)
+
+				if np.isfinite(self.train_loss[-1]):
+					pass
+				else:
+					print('model is breaking')
+					break
+
+				# if ii % print_every == 0:                  # print every mini-batches
+				if self.verbose:
+					print('Epoch-loss:: train %.5f  valid %.5f lr %.5f' %(self.train_loss[-1], self.valid_loss[-1], lr)) 
+					print('-'*20)
+			
+				# save
+				if epoch % (self.epochs -1) == 0:
+					self.SaveModel(epoch)
+
+		
+		if self.scheduler == 'StepLR':
+			return TrainLR()
+		elif self.scheduler == 'ReduceLROnPlateau':
+			return TrainRLROP()
+
+		# for epoch in range(self.epochs):  # loop over the dataset multiple times
+		# 	train_loss_tmp = 0.0
+		# 	self.model.train()
+
+		# 	sw_op_flag = (epoch // self.op_step_size) % 2
+
+		# 	for ii, loader_batch_train in enumerate(self.loader_train, 0):
+				
+		# 		# get the inputs; data is a list of [inputs, labels]
+		# 		# x_train = input
+		# 		# y_train = target 
+		# 		x_train, y_train, z_train = loader_batch_train
+		# 		x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
+
+		# 		# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
+		# 		# this is potentially causing accumlation of gradients when we are switching from one optimizer to the next. best to set both to zero anyway?
+				
+		# 		#self.optimiser1.zero_grad()
+		# 		#self.optimiser2.zero_grad()
+		# 		for param in self.model.parameters():
+		# 			param.grad = None
+
+
+		# 		#forward propagation
+		# 		y_train_predict = self.model.forward(x_train)
+
+		# 		#define the loss and then backward propagate
+		# 		loss1 = self.criterion(y_train_predict, y_train, z_train)
+				
+		# 		loss1.backward()
+
+		# 		#incorporate a clip on the values of the gradients, to avoid exploding gradients 
+		# 		clip_grad_norm_(self.model.coder.parameters(), 2)
+		# 		clip_grad_norm_(self.model.ppha.parameters(), 2)
+		# 		clip_grad_norm_(self.model.aamp.parameters(), 1.25)
+
+		# 		#optimize the weights and biases
+		# 		# if sw_op_flag == 0:
+		# 		# 	self.optimiser1.step()
+		# 		# elif sw_op_flag == 1:
+		# 		# 	self.optimiser2.step()
+
+		# 		self.optimiser1.step()
+
+		# 		train_loss_tmp += loss1.item()
+				
+		# 		# print info if needed
+		# 		if self.verbose:
+		# 			if ii % self.print_every == 0: 
+		# 				print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
+
+		# 	#update the learning rate
+		# 	# if sw_op_flag == 0:
+		# 	# 	self.scheduler1.step()
+		# 	# 	lr = self.GetLR(self.optimiser1)
+		# 	# 	print('Using Optimiser 1')
+		# 	# elif sw_op_flag == 1:
+		# 	# 	self.scheduler2.step()
+		# 	# 	lr = self.GetLR(self.optimiser2)
+		# 	# 	print('Using Optimiser 2')
+			
+		# 	# self.scheduler1.step()
+		# 	# lr = self.GetLR(self.optimiser1)
+			
+		# 	#validation step
+		# 	with torch.no_grad():
+		# 		valid_loss_tmp = 0.0
+		# 		self.model.eval() # turn off some specific parts of the model for the evaluation with model.eval()
+		# 		for loader_batch_test in self.loader_test:
+		# 			x_test, y_test, z_test = loader_batch_test
+		# 			x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
+		# 			y_pred = self.model.forward(x_test)
+		# 			loss2 = self.criterion(y_pred, y_test, z_test)
+		# 			valid_loss_tmp += loss2.item()
+			
+		# 	print(len(self.loader_test))
+		# 	self.train_loss.append(train_loss_tmp / len(self.loader_train))
+		# 	self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
+
+		# 	self.scheduler1.step(self.valid_loss[-1])
+		# 	lr = self.GetLR(self.optimiser1)
+
+		# 	if np.isfinite(self.train_loss[-1]):
+		# 		pass
+		# 	else:
+		# 		print('model is breaking')
+		# 		break
+
+		# 	# if ii % print_every == 0:                  # print every mini-batches
+		# 	if self.verbose:
+		# 		print('Epoch-loss:: train %.5f  valid %.5f lr %.5f' %(self.train_loss[-1], self.valid_loss[-1], lr)) 
+		# 		print('-'*20)
+		
+		# 	# save
+		# 	if epoch % (self.epochs -1) == 0:
+		# 		self.SaveModel(epoch)
+	##
+
+	def one_Train(self, fname, mask=100):
+
+		
+
+		self.expdata = np.load(fname)
+		self.expdata = self.expdata > mask
+
+		maxElement = np.amax(self.expdata)
+
+		self.expdata = self.expdata / maxElement
+
+		i = self.expdata.shape[0]
+		j = self.expdata.shape[1]
+		k = self.expdata.shape[2]
+
+		torcharray = np.zeros((1,1,i,j,k), dtype=np.double)
+		torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
+		x_input = torch.from_numpy(torcharray)
+		x_input = x_input.to(device = self.device, dtype = torch.float)
+
 		for epoch in range(self.epochs):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
 			self.model.train()
 
-			sw_op_flag = (epoch // self.op_step_size) % 2
 
-			for ii, loader_batch_train in enumerate(self.loader_train, 0):
-				
-				# get the inputs; data is a list of [inputs, labels]
-				# x_train = input
-				# y_train = target 
-				x_train, y_train, z_train = loader_batch_train
-				x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
+			self.optimiser1.zero_grad()
 
-				# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
-				# this is potentially causing accumlation of gradients when we are switching from one optimizer to the next. best to set both to zero anyway?
-				
-				self.optimiser1.zero_grad()
-				#self.optimiser2.zero_grad()
+			y_output = self.model.forward(x_input)
 
-				# forward propagation
-				y_train_predict = self.model.forward(x_train)
-				
-				#define the loss and then backward propagate
-				loss1 = self.criterion(y_train_predict, y_train, z_train)
-				
-				loss1.backward()
+			loss1 = self.criterion(y_output, x_input)
 
-				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
-				clip_grad_norm_(self.model.coder.parameters(), 2)
-				clip_grad_norm_(self.model.ppha.parameters(), 2)
-				clip_grad_norm_(self.model.aamp.parameters(), 1.25)
+			loss1.backward
 
-				#optimize the weights and biases
-				if sw_op_flag == 0:
-					self.optimiser1.step()
-				elif sw_op_flag == 1:
-					self.optimiser2.step()
+			train_loss_tmp += loss1.item()
 
-				#self.optimiser1.step()
+			clip_grad_norm_(self.model.coder.parameters(), 2)
+			clip_grad_norm_(self.model.ppha.parameters(), 2)
+			clip_grad_norm_(self.model.aamp.parameters(), 1.25)
 
-				train_loss_tmp += loss1.item()
-				
-				# print info if needed
-				if self.verbose:
-					if ii % self.print_every == 0: 
-						print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
+			self.optimiser1.step
 
-			#update the learning rate
-			if sw_op_flag == 0:
-				self.scheduler1.step()
-				lr = self.GetLR(self.optimiser1)
-				print('Using Optimiser 1')
-			elif sw_op_flag == 1:
-				self.scheduler2.step()
-				lr = self.GetLR(self.optimiser2)
-				print('Using Optimiser 2')
-			
-			#self.scheduler1.step()
-			#lr = self.GetLR(self.optimiser1)
-			
-			#validation step
-			with torch.no_grad():
-				valid_loss_tmp = 0.0
-				self.model.eval() # turn off some specific parts of the model for the evaluation with model.eval()
-				for loader_batch_test in self.loader_test:
-					x_test, y_test, z_test = loader_batch_test
-					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
-					y_pred = self.model.forward(x_test)
-					loss2 = self.criterion(y_pred, y_test, z_test)
-					valid_loss_tmp += loss2.item()
-			
-			print(len(self.loader_test))
-			self.train_loss.append(train_loss_tmp / len(self.loader_train))
-			self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
+			self.scheduler1.step()
+			lr = self.GetLR(self.optimiser1)
 
-			# self.scheduler1.step(self.valid_loss[-1])
-			# lr = self.GetLR(self.optimiser1)
+			self.train_loss.append(train_loss_tmp)
 
 			if np.isfinite(self.train_loss[-1]):
 				pass
@@ -807,15 +1109,13 @@ class CNNTrain():
 				print('model is breaking')
 				break
 
-			# if ii % print_every == 0:                  # print every mini-batches
 			if self.verbose:
-				print('Epoch-loss:: train %.5f  valid %.5f lr %.5f' %(self.train_loss[-1], self.valid_loss[-1], lr)) 
+				print('Epoch-loss:: train %.5f   lr %.5f' %(self.train_loss[-1], lr)) 
 				print('-'*20)
-		
-			# save
+
 			if epoch % (self.epochs -1) == 0:
 				self.SaveModel(epoch)
-	##
+
 	def SaveModel(self, epoch=0):
 		"""
 		saving the model
@@ -976,15 +1276,6 @@ if __name__ == '__main__':
 	mynn.SetScheduler2('StepLR')
 	mynn.SetNEpochs(1)
 	mynn.TrainNN()
-	mynn.SaveParameters()
+	#mynn.SaveParameters()
 	mynn.PlotLoss()
 
-
-if __name__ == '__main__':
-	predict = CNNPredict()
-	predict.SetDeviceType('cuda')
-	predict.SetModel(NNModel)
-	predict.SetExpData('expdata.py', mask=500)
-	predict.SetTrainedNN('CP200.pth')
-	predict.SetOutputFile('output.py')
-	predict.Predict()
