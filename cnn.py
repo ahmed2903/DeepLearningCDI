@@ -34,8 +34,11 @@ class double_conv(nn.Module):
 	This concludes one layer in the encoder
 
 	Values that can be tuned are: momentum and Grad of the leaky relu 
+
+	Batch Normalization momentum: smaller batch size should equate to a large value of momentum ~ 0.9 - 0.99
+									bigger batch size needs smaller values of momentum
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
 		super(double_conv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=False), 
@@ -57,7 +60,7 @@ class inconv(nn.Module):
 	"""
 	Same as the previous convolutional layer, however, the second convolution is summarized in one operation opposed to three
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
 		super(inconv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=False), 
@@ -78,7 +81,7 @@ class down(nn.Module):
 	Main encoder part
 	Applying a maxpooling operation followed by the convultional layer
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
 		super(down, self).__init__()
 		self.mpconv = nn.Sequential(
 			nn.MaxPool3d(kernel_size=(2, 2, 2)),
@@ -95,7 +98,7 @@ class up01(nn.Module):
 	Amplitude recosntruction
 	Upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.3):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
 		super(up01, self).__init__()
 		self.upconv = nn.Sequential(
 			nn.Upsample(scale_factor=2, mode='nearest'),
@@ -111,7 +114,7 @@ class up02(nn.Module):
 	phase reconstriction
 	upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
 		super(up02, self).__init__()
 		self.upconv = nn.Sequential(
 			nn.Upsample(scale_factor=2, mode='nearest'),
@@ -496,12 +499,14 @@ class CNNTrain():
 		sets the learning rate step size, i.e. the number of epochs after which the learning rate will update
 		"""
 		self.lrate_step_size = lrate_step_size
+
 	def SetLR(self, lr01, lr02):
 		"""
 		sets the learning rate
 		"""
 		self.lr01 = lr01
 		self.lr02 = lr02
+
 	def SetMomentum(self, momentum):
 		"""
 		sets the momentum of the SGD algorithm
@@ -682,6 +687,42 @@ class CNNTrain():
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
 
 		return loss
+
+	def all_loss2(self, output, target):
+		"""
+		Function to define the total loss in the training
+		loss in the phase channel is computed (loss2)
+		loss in the amplitude channel is computed (loss1)
+		loss in the fourier transform of the object is computed (loss3)
+
+		all are merged together in loss function 
+
+		user can add their own loss function and call it in critereon function
+		"""
+		X = self.data_shape[-3]
+		Y= self.data_shape[-2]
+		Z = self.data_shape[-1]
+		X2 = X//2
+		X4 = X//4
+		Y2 = Y//2
+		Y4 = Y//4
+		Z2 =  Z//2
+		Z4 = Z//4
+
+		output0 = torch.zeros(output.shape[0], output.shape[1], X, Y, Z, device=self.device, requires_grad=False)
+		output0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4), (Z2 - Z4):(Z2 + Z4)] = output
+
+		target0 = torch.zeros(output.shape[0], output.shape[1], X, Y, Z, device=self.device, requires_grad=False)
+		target0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4), (Z2 - Z4):(Z2 + Z4)] = target
+
+		loss1 = self.pcc_loss(output0[:, 0, :, :, :],target0[:, 0, :, :, :])
+		loss2 = self.pcc_loss(output0[:, 1, :, :, :],target0[:, 1, :, :, :])
+
+
+		alpha, beta = 1., 1.
+		loss = (alpha * loss1 + beta * loss2) / (alpha + beta)
+
+		return loss
 	
 	def one_loss(self, output, input):
 
@@ -702,7 +743,9 @@ class CNNTrain():
 		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
 		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
  
-		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
+
+		obj_comp = obj_comp[:,0,:,:,:] + 1j * obj_comp[:,1,:,:,:]
+		#obj_comp = obj_comp[:,0,:,:,:] * torch.exp( 1j * obj_comp[:,1,:,:,:])
 
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
@@ -713,11 +756,11 @@ class CNNTrain():
 		return loss
 
 		
-	def criterion(self, output, target, input):
+	def criterion(self, output, target):
 		""" 
 		calling the desired loss function to be used 
 		"""
-		return self.all_loss(output, target, input)
+		return self.all_loss2(output, target)
 
 		#return self.one_loss(output, input)
 
@@ -772,8 +815,8 @@ class CNNTrain():
 					# get the inputs; data is a list of [inputs, labels]
 					# x_train = input
 					# y_train = target 
-					x_train, y_train, z_train = loader_batch_train
-					x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
+					x_train, y_train, _ = loader_batch_train
+					x_train, y_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device)
 
 
 
@@ -790,7 +833,7 @@ class CNNTrain():
 					y_train_predict = self.model.forward(x_train)
 
 					#define the loss and then backward propagate
-					loss1 = self.criterion(y_train_predict, y_train, z_train)
+					loss1 = self.criterion(y_train_predict, y_train)
 					
 					loss1.backward()
 
@@ -832,10 +875,10 @@ class CNNTrain():
 					valid_loss_tmp = 0.0
 					self.model.eval() # turn off some specific parts of the model for the evaluation with model.eval()
 					for loader_batch_test in self.loader_test:
-						x_test, y_test, z_test = loader_batch_test
-						x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
+						x_test, y_test, _ = loader_batch_test
+						x_test, y_test = x_test.to(self.device), y_test.to(self.device)
 						y_pred = self.model.forward(x_test)
-						loss2 = self.criterion(y_pred, y_test, z_test)
+						loss2 = self.criterion(y_pred, y_test)
 						valid_loss_tmp += loss2.item()
 				
 				print(len(self.loader_test))
@@ -870,8 +913,8 @@ class CNNTrain():
 					# get the inputs; data is a list of [inputs, labels]
 					# x_train = input
 					# y_train = target 
-					x_train, y_train, z_train = loader_batch_train
-					x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
+					x_train, y_train, _ = loader_batch_train
+					x_train, y_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device)
 
 					# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
 					# this is potentially causing accumlation of gradients when we are switching from one optimizer to the next. best to set both to zero anyway?
@@ -886,7 +929,7 @@ class CNNTrain():
 					y_train_predict = self.model.forward(x_train)
 
 					#define the loss and then backward propagate
-					loss1 = self.criterion(y_train_predict, y_train, z_train)
+					loss1 = self.criterion(y_train_predict, y_train)
 					
 					loss1.backward()
 
@@ -925,10 +968,10 @@ class CNNTrain():
 					valid_loss_tmp = 0.0
 					self.model.eval() # turn off some specific parts of the model for the evaluation with model.eval()
 					for loader_batch_test in self.loader_test:
-						x_test, y_test, z_test = loader_batch_test
-						x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
+						x_test, y_test, _ = loader_batch_test
+						x_test, y_test  = x_test.to(self.device), y_test.to(self.device)
 						y_pred = self.model.forward(x_test)
-						loss2 = self.criterion(y_pred, y_test, z_test)
+						loss2 = self.criterion(y_pred, y_test)
 						valid_loss_tmp += loss2.item()
 				
 				print(len(self.loader_test))
