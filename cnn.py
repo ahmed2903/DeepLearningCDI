@@ -11,16 +11,10 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-#from python_utils import get_lr
 from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data import Dataset, DataLoader
 from torch.autograd import Variable
-from torch.nn.utils import clip_grad_norm_, clip_grad_value_
-
-#import cupy as cp
-
-from torch.utils.dlpack import to_dlpack
-from torch.utils.dlpack import from_dlpack
+from torch.nn.utils import clip_grad_norm_
 
 from time import strftime
 
@@ -81,7 +75,7 @@ class down(nn.Module):
 	Main encoder part
 	Applying a maxpooling operation followed by the convultional layer
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.5):
 		super(down, self).__init__()
 		self.mpconv = nn.Sequential(
 			nn.MaxPool3d(kernel_size=(2, 2, 2)),
@@ -98,7 +92,7 @@ class up01(nn.Module):
 	Amplitude recosntruction
 	Upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.5):
 		super(up01, self).__init__()
 		self.upconv = nn.Sequential(
 			nn.Upsample(scale_factor=2, mode='nearest'),
@@ -114,7 +108,7 @@ class up02(nn.Module):
 	phase reconstriction
 	upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.5):
 		super(up02, self).__init__()
 		self.upconv = nn.Sequential(
 			nn.Upsample(scale_factor=2, mode='nearest'),
@@ -313,10 +307,10 @@ class NNModel(nn.Module):
 		return x0
 
 class CNNTrain():
-	def __init__(self, device_type='cpu'):
+	def __init__(self):
 		self.verbose = True
 		self.print_every = 8 
-		self.device_type = device_type
+		self.device_type = 'cuda'
 		self.device = None
 		self.input_data = None
 		self.target_data0 = None
@@ -330,9 +324,10 @@ class CNNTrain():
 		self.train_idx = None
 		self.test_idx = None
 		self.batch_size = 16 #number of datasets to be included within one batch -preferrably powers of 2
-		self.valid_size=0.05 #fraction of the training set to be used for validation
+		self.valid_size = 0.05 #fraction of the training set to be used for validation
 		self.loader_train = None
 		self.loader_test = None
+		self.initilization = 'Kaiming'
 		self.lrate_step_size = 5 #updates the learning rate after n epochs according to the schedular 
 		self.op_step_size = 50 #optimiser step size, after n epochs, it changes the optimiser from optimiser1 to optimiser2 
 		self.lr01 = 1e-2 #learning rate for the optimiser steps
@@ -340,6 +335,7 @@ class CNNTrain():
 		self.momentum = 0.9 #momentum for the SGD algorithm
 		self.gamma = 0.1 #multiplicative factor for the LR schedular 
 		self.scheduler = 'StepLR'
+		self.no_optimisers = 1
 		self.optimiser1 = None
 		self.optimiser2 = None
 		self.scheduler1 = None
@@ -349,7 +345,7 @@ class CNNTrain():
 		self.valid_loss = []
 		self.datestr = ''
 
-	def SetDeviceType(self, device_type='cpu'):
+	def SetDeviceType(self, device_type='cuda'):
 		"""
 		Sets the device to be used to either a cpu or a gpu if it is available
 		"""
@@ -368,14 +364,16 @@ class CNNTrain():
 
 		self.input_data = np.load(fname)
 		self.data_shape = self.input_data.shape
-		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-1], self.data_shape[-2], self.data_shape[-3]), dtype='float64')
+		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-3], self.data_shape[-2], self.data_shape[-1]), dtype='float64')
 		self.target_data1[:] = self.input_data[:,0,:,:,:]
 
-	def SetTargetDataReal(self, fname):
+	def SetTargetData(self, fname):
 		"""
 		loads the target data of the training set
 		shape should be (n,2,x//2,y//2,z//2)
 		"""
+		#Check inputs are as expected. WRITE
+
 		self.target_data0 = np.load(fname)
 
 	def SetDimensions(self):
@@ -392,22 +390,24 @@ class CNNTrain():
 		Selecting the model to be used for the Neural network
 		"""
 		self.model = model(nn=2).to(self.device)
+
 	def SetValidSize(self, valid_size):
 		"""
 		sets the validation size of the training set
 		"""
 		self.valid_size = valid_size
+
 	def SplitData(self):
 		"""
 		splits the training set into two sets: one for training and one for vaidation
 		"""
 		num_train = len(self.input_data)
-		print(num_train)
+		#print(num_train)
 		indices = list(range(num_train))
 		split = int(np.floor(self.valid_size * num_train))
 		np.random.shuffle(indices)
 		self.train_idx, self.test_idx = indices[split:], indices[:split]
-		print(len(self.train_idx), len(self.test_idx))
+		#print(len(self.train_idx), len(self.test_idx))
 
 	def SetBatchSize(self, batch_size):
 		"""
@@ -455,7 +455,7 @@ class CNNTrain():
 		else:
 			print('error starts here')
 
-	def _InitializeWeights(self, m):
+	def XavierNormal(self, m):
 
 		"""
 		function to initialize the weights and biases in the network
@@ -470,12 +470,37 @@ class CNNTrain():
 		elif isinstance(m, nn.BatchNorm3d):
 			nn.init.constant_(m.weight.data, 1)
 			nn.init.constant_(m.bias.data, 0)
+	
+	def KaimingNormal(self,m):
 
-	def InitializeWeights(self):
+		"""
+		function to initialize the weights and biases in the network
+		values are set per type of layer (conv3D and batchnorm3D)
+		helps avoid exploding gradients
+		"""
+
+		if isinstance(m, nn.Conv3d):
+			nn.init.kaiming_normal_(m.weight.data, mode='fan_in', nonlinearity='leaky_relu')
+			if m.bias is not None:
+				nn.init.constant_(m.bias.data, 0)
+		elif isinstance(m, nn.BatchNorm3d):
+			nn.init.constant_(m.weight.data, 1)
+			nn.init.constant_(m.bias.data, 0)
+	
+	def InitializeWeightsPre(self, filename):
+		self.model.load_state_dict(torch.load(filename))
+
+	def InitializeWeights(self, initilization = 'Kaiming'):
 		"""
 		applied the weight initization to the set network
 		"""
-		self.model.apply(self._InitializeWeights)
+		if initilization == 'Kaiming':
+			self.model.apply(self.KaimingNormal)
+			self.initilization = 'Kaiming Normal'
+		elif initilization == 'Xavier':
+			self.model.apply(self.XavierNormal)
+			self.initilization = 'Xavier Normal'
+
 
 	def InitializeWeights2(self):
 		for p in self.model.parameters():
@@ -491,8 +516,7 @@ class CNNTrain():
 			# p.data.uniform_(0.020, 0.05)
 			# print(p)	
 
-	def InitializeWeightsPre(self, filename):
-		self.model.load_state_dict(torch.load(filename))
+
 
 	def SetLRStepSize(self, lrate_step_size):
 		"""
@@ -582,36 +606,11 @@ class CNNTrain():
 		-should not have to do that though-
 		"""
 		if scheduler == 'StepLR':
-			self.scheduler2 = ss.StepLR(self.optimiser1, step_size=self.lrate_step_size, gamma=self.gamma)
+			self.scheduler2 = ss.StepLR(self.optimiser2, step_size=self.lrate_step_size, gamma=self.gamma)
 		elif scheduler == 'ReduceLROnPlateau':
-			self.scheduler2 = ss.ReduceLROnPlateau(self.optimiser1, mode='min', factor=0.5, patience=10)
+			self.scheduler2 = ss.ReduceLROnPlateau(self.optimiser2, mode='min', factor=0.5, patience=10)
 		else: 
 			print('Scheduler 2 not defined')
-
-	# def pull_out_gpu_fft(self, output):
-	# 	X = self.data_shape[-2]
-	# 	Y= self.data_shape[-1]
-	# 	X2 = X//2
-	# 	X4 = X//4
-	# 	Y2 = Y//2
-	# 	Y4 = Y//4
-	# 	dx = to_dlpack(output) # type/tensor conversion
-	# 	cx = np.fromDlpack(dx) # type/tensor conversion
-	# 	cx1, cx2 = cx[:, 0, :, :], cx[:, 1, :, :] #split channels 
-
-	# 	cx11 = np.zeros(([cx1.shape[0], 1, X, Y]), dtype='float32') #empty arrays
-	# 	cx22 = np.zeros(([cx2.shape[0], 1, X, Y]), dtype='float32') #empty arrays
-
-	# 	#increase dimensions to 64x64 (input dimensions for FT)
-
-	# 	cx11[:, 0, X4:X4+X2, Y4:Y4+Y2] = cx1.copy() # cenre array of 32x32 in array of 64x64
-	# 	cx22[:, 0, X4:X4+X2, Y4:Y4+Y2] = cx2.copy() # cenre array of 32x32 in array of 64x64
-
-	# 	cx1122 = cx11 * np.exp(4j * np.pi * cx22)
-
-	# 	cx1122 = np.abs(np.fft.ifftshift(np.fft.fft2(np.fft.fftshift(cx1122, axes=(-2, -1)), axes=(-2, -1)), axes=(-2, -1)))
-
-	# 	return from_dlpack(cx1122.toDlpack())
 
 	def chi_loss(self, output, target):
 		"""
@@ -776,6 +775,10 @@ class CNNTrain():
 		set the number of loops over the entire training data set during the training
 		"""
 		self.epochs = epochs
+	
+	def SetNOptimisers(self, N = 1):
+
+		self.no_optimisers = N
 
 	def TrainNN(self):
 		"""
@@ -796,6 +799,8 @@ class CNNTrain():
 
 		validaiton takes place in another for loop
 			model.eval() turns off parts of the network that interfere with the validation
+
+		Two function exist in the method to account for changes when using the StepLR schdeuler or the ReduceLROnPlateau
 
 		training error and validation errors are recorded 
 
@@ -842,13 +847,18 @@ class CNNTrain():
 					clip_grad_norm_(self.model.ppha.parameters(), 2)
 					clip_grad_norm_(self.model.aamp.parameters(), 1.25)
 
-					#optimize the weights and biases
-					# if sw_op_flag == 0:
-					# 	self.optimiser1.step()
-					# elif sw_op_flag == 1:
-					# 	self.optimiser2.step()
 
-					self.optimiser1.step()
+
+					#optimize the weights and biases
+					
+					if self.no_optimisers == 1:
+						self.optimiser1.step()
+					
+					elif self.no_optimisers == 2:
+						if sw_op_flag == 0:
+							self.optimiser1.step()
+						elif sw_op_flag == 1:
+							self.optimiser2.step()
 
 					train_loss_tmp += loss1.item()
 					
@@ -858,17 +868,20 @@ class CNNTrain():
 							print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
 
 				#update the learning rate
-				# if sw_op_flag == 0:
-				# 	self.scheduler1.step()
-				# 	lr = self.GetLR(self.optimiser1)
-				# 	print('Using Optimiser 1')
-				# elif sw_op_flag == 1:
-				# 	self.scheduler2.step()
-				# 	lr = self.GetLR(self.optimiser2)
-				# 	print('Using Optimiser 2')
-				
-				self.scheduler1.step()
-				lr = self.GetLR(self.optimiser1)
+
+				if self.no_optimisers == 1:
+					self.scheduler1.step()
+					lr = self.GetLR(self.optimiser1)
+
+				elif self.no_optimisers == 2:
+					if sw_op_flag == 0:
+						self.scheduler1.step()
+						lr = self.GetLR(self.optimiser1)
+						print('Using Optimiser 1')
+					elif sw_op_flag == 1:
+						self.scheduler2.step()
+						lr = self.GetLR(self.optimiser2)
+						print('Using Optimiser 2')
 				
 				#validation step
 				with torch.no_grad():
@@ -939,12 +952,14 @@ class CNNTrain():
 					clip_grad_norm_(self.model.aamp.parameters(), 1.25)
 
 					#optimize the weights and biases
-					# if sw_op_flag == 0:
-					# 	self.optimiser1.step()
-					# elif sw_op_flag == 1:
-					# 	self.optimiser2.step()
-
-					self.optimiser1.step()
+					if self.no_optimisers == 1:
+						self.optimiser1.step()
+					
+					elif self.no_optimisers == 2:
+						if sw_op_flag == 0:
+							self.optimiser1.step()
+						elif sw_op_flag == 1:
+							self.optimiser2.step()
 
 					train_loss_tmp += loss1.item()
 					
@@ -952,16 +967,6 @@ class CNNTrain():
 					if self.verbose:
 						if ii % self.print_every == 0: 
 							print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
-
-				#update the learning rate
-				# if sw_op_flag == 0:
-				# 	self.scheduler1.step()
-				# 	lr = self.GetLR(self.optimiser1)
-				# 	print('Using Optimiser 1')
-				# elif sw_op_flag == 1:
-				# 	self.scheduler2.step()
-				# 	lr = self.GetLR(self.optimiser2)
-				# 	print('Using Optimiser 2')
 				
 				#validation step
 				with torch.no_grad():
@@ -978,8 +983,19 @@ class CNNTrain():
 				self.train_loss.append(train_loss_tmp / len(self.loader_train))
 				self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
 
-				self.scheduler1.step(self.valid_loss[-1])
-				lr = self.GetLR(self.optimiser1)
+				if self.no_optimisers == 1:
+					self.scheduler1.step(self.valid_loss[-1])
+					lr = self.GetLR(self.optimiser1)
+
+				elif self.no_optimisers == 2:
+					if sw_op_flag == 0:
+						self.scheduler1.step(self.valid_loss[-1])
+						lr = self.GetLR(self.optimiser1)
+						print('Using Optimiser 1')
+					elif sw_op_flag == 1:
+						self.scheduler2.step(self.valid_loss[-1])
+						lr = self.GetLR(self.optimiser2)
+						print('Using Optimiser 2')
 
 				if np.isfinite(self.train_loss[-1]):
 					pass
@@ -1184,15 +1200,16 @@ class CNNTrain():
 		params = ""
 		params += "Device Type: %s \n"%self.device_type
 		params += "Optimiser: %s \n"%self.optimiser1
-		params += "Validation Size: %1.5e  \n"%self.valid_size
-		params += "Batch Size: %2.6f \n" %self.batch_size
+		params += "Initilizing the parameters using: %s \n"%self.initilization
+		params += "Validation Size: %f  \n"%self.valid_size
+		params += "Batch Size: %d \n" %self.batch_size
 		params += "Learning Rate: %2.6f \n" %self.lr01
 		params += "Learning Rate Step Size: %2.6f \n" %self.lrate_step_size
-		params += "Momentum: %d \n" %self.momentum
-		params += "Gamma: %d \n" %self.gamma
+		params += "Momentum: %f \n" %self.momentum
+		params += "Gamma: %f \n" %self.gamma
 		params += "Number of Epochs: %d \n" %self.epochs
-		params += "Valdiation loss: %d \n" %self.valid_loss[-1]
-		params += "Training Loss: %d \n" %self.train_loss[-1]
+		params += "Valdiation loss: %f \n" %self.valid_loss[-1]
+		params += "Training Loss: %f \n" %self.train_loss[-1]
 		params += "-"*20
 		#params += 'Model: \n\n', self.model, '\n'
 
@@ -1301,24 +1318,25 @@ if __name__ == '__main__':
 	mynn = CNNTrain()
 	mynn.SetDeviceType('cuda')
 	mynn.SetInputData('reci_intensity.npy')
-	mynn.SetTargetDataReal('real_obj.npy')
+	mynn.SetTargetData('real_obj.npy')
 	mynn.SetModel(NNModel)
 	mynn.SetValidSize(0.1)
 	mynn.SplitData()
 	mynn.SetBatchSize(5)
 	mynn.LoadSplitTrain(loadtype='train')
 	mynn.LoadSplitTrain(loadtype='test')
-	mynn.InitializeWeights()
-	mynn.SetLRStepSize(10)
-	mynn.SetLR(1e-2,1e-4)
+	mynn.InitializeWeights('Kaiming') #takes in Kaiming or Xavier
+	mynn.SetLRStepSize(25)
+	mynn.SetLR(1e-4,1e-6)
 	mynn.SetMomentum(0.9)
-	mynn.SetGamma(0.1)
-	mynn.SetOptimiser1('SGD')
+	mynn.SetGamma(0.75)
+	mynn.SetNOptimisers(N=1)
+	mynn.SetOptimiser1('ASGD')
 	mynn.SetOptimiser2('ADAM')
 	mynn.SetScheduler1('StepLR')
 	mynn.SetScheduler2('StepLR')
-	mynn.SetNEpochs(1)
+	mynn.SetNEpochs(100)
 	mynn.TrainNN()
-	#mynn.SaveParameters()
+	mynn.SaveParameters()
 	mynn.PlotLoss()
 
