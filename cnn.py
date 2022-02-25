@@ -355,17 +355,17 @@ class CNNTrain():
 		else:
 			self.device = torch.device("cpu")
 
-	def SetInputData(self, fname):
+	def SetInputData(self, fname1,fname2):
 
 		"""
 		Loading diffraction data of the training set, shape should be (n,1,x,y,z)
 		and creating another version of the data without any channels such that shape (n,x,y,z)
 		"""
 
-		self.input_data = np.load(fname)
+		self.input_data = np.load(fname1)
+		self.target_data1 = np.load(fname2)
+
 		self.data_shape = self.input_data.shape
-		self.target_data1 = np.zeros((self.data_shape[0], self.data_shape[-3], self.data_shape[-2], self.data_shape[-1]), dtype='float64')
-		self.target_data1[:] = self.input_data[:,0,:,:,:]
 
 	def SetTargetData(self, fname):
 		"""
@@ -420,7 +420,7 @@ class CNNTrain():
 		selects random samples to be used for the validation
 		puts batches of the traning set together
 		"""
-		datax = self.input_data[index].astype('float64') 
+		datax = self.input_data[index].astype('float64')
 		datay = self.target_data0[index].astype('float64')
 		dataz = self.target_data1[index].astype('float64')
 		
@@ -640,7 +640,7 @@ class CNNTrain():
 
 		all are merged together in loss function 
 
-		user can add their own loss function and call it in critereon function
+		user can add their own loss function and call it in criterion function
 		"""
 		X = self.data_shape[-3]
 		Y= self.data_shape[-2]
@@ -657,10 +657,9 @@ class CNNTrain():
 		target0 = torch.zeros(output.shape[0], output.shape[1], X, Y, Z, device=self.device, requires_grad=False)
 		target0[:, :, (X2 - X4):(X2 + X4), (Y2 - Y4):(Y2 + Y4), (Z2 - Z4):(Z2 + Z4)] = target
 
-		loss1 = torch.sqrt(torch.mean((output0[:, 0, :, :, :] - target0[:, 0, :, :,:]) ** 2) /
-						   (torch.mean(target0[:, 0, :, :, :] ** 2)))
-		loss2 = torch.sqrt(torch.mean((output0[:, 1, :, :, :] - target0[:, 1, :, :,:]) ** 2) /
-						   (torch.mean(target0[:, 1, :, :, :] ** 2)))
+		loss1 = self.pcc_loss(output0[:, 0, :, :, :],target0[:, 0, :, :, :])
+		loss2 = self.pcc_loss(output0[:, 1, :, :, :],target0[:, 1, :, :, :])
+
 
 		#complex output object
 		#get complex object of the output i.e. an object that includes the phase and amplitude
@@ -673,7 +672,6 @@ class CNNTrain():
  
 		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
 		
-
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
 		#amp_out = torch.zeros((output.shape[0], X, Y, Z), requires_grad=False, device=self.device, dtype=float)
@@ -682,7 +680,7 @@ class CNNTrain():
 		#input has the shape (n,1,X,Y,Z)
 
 		loss3 = self.pcc_loss(amp_out, input) 
-		alpha, beta, gamma = 1., 1., 4.
+		alpha, beta, gamma = 1., 1., 1.
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
 
 		return loss
@@ -755,11 +753,11 @@ class CNNTrain():
 		return loss
 
 		
-	def criterion(self, output, target):
+	def criterion(self, output, target0, target1):
 		""" 
 		calling the desired loss function to be used 
 		"""
-		return self.all_loss2(output, target)
+		return self.all_loss(output, target0, target1)
 
 		#return self.one_loss(output, input)
 
@@ -776,7 +774,9 @@ class CNNTrain():
 		"""
 		self.epochs = epochs
 	
-	def SetNOptimisers(self, N = 1):
+	def SetNOptimisers(self, N = 1, Sw = 50):
+
+		self.op_step_size = Sw
 
 		self.no_optimisers = N
 
@@ -820,8 +820,8 @@ class CNNTrain():
 					# get the inputs; data is a list of [inputs, labels]
 					# x_train = input
 					# y_train = target 
-					x_train, y_train, _ = loader_batch_train
-					x_train, y_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device)
+					x_train, y_train, z_train = loader_batch_train
+					x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
 
 
 
@@ -838,7 +838,7 @@ class CNNTrain():
 					y_train_predict = self.model.forward(x_train)
 
 					#define the loss and then backward propagate
-					loss1 = self.criterion(y_train_predict, y_train)
+					loss1 = self.criterion(y_train_predict, y_train, z_train)
 					
 					loss1.backward()
 
@@ -888,10 +888,10 @@ class CNNTrain():
 					valid_loss_tmp = 0.0
 					self.model.eval() # turn off some specific parts of the model for the evaluation with model.eval()
 					for loader_batch_test in self.loader_test:
-						x_test, y_test, _ = loader_batch_test
-						x_test, y_test = x_test.to(self.device), y_test.to(self.device)
+						x_test, y_test, z_test = loader_batch_test
+						x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
 						y_pred = self.model.forward(x_test)
-						loss2 = self.criterion(y_pred, y_test)
+						loss2 = self.criterion(y_pred, y_test, z_test)
 						valid_loss_tmp += loss2.item()
 				
 				print(len(self.loader_test))
@@ -1199,7 +1199,9 @@ class CNNTrain():
 		"""
 		params = ""
 		params += "Device Type: %s \n"%self.device_type
-		params += "Optimiser: %s \n"%self.optimiser1
+		params += "Optimiser 1: %s \n"%self.optimiser1
+		if self.no_optimisers == 2:
+			params += "Optimiser 2: %s \n"%self.optimiser2
 		params += "Initilizing the parameters using: %s \n"%self.initilization
 		params += "Validation Size: %f  \n"%self.valid_size
 		params += "Batch Size: %d \n" %self.batch_size
@@ -1246,7 +1248,7 @@ class CNNPredict():
 		"""
 		Selecting the model to be used for the Neural network
 		"""
-		self.model = model(1, 1).to(self.device)
+		self.model = model(nn=2).to(self.device)
 
 
 	def SetExpData(self, fname, mask=100):
@@ -1262,6 +1264,7 @@ class CNNPredict():
 		maxElement = np.amax(self.expdata)
 
 		self.expdata = self.expdata / maxElement
+		self.expdata = np.sqrt(self.expdata)
 		
 	def SetTrainedNN(self, fname):
 		"""
