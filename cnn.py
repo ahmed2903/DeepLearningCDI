@@ -735,18 +735,19 @@ class CNNTrain():
 		Z2 =  Z//2
 		Z4 = Z//4
 
-		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 	
+		obj_comp = torch.zeros(1, 2, X, Y, Z, requires_grad=False, device = self.device) 
 
 		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
 		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
  
-
-		obj_comp = obj_comp[:,0,:,:,:] + 1j * obj_comp[:,1,:,:,:]
-		#obj_comp = obj_comp[:,0,:,:,:] * torch.exp( 1j * obj_comp[:,1,:,:,:])
-
+		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
+		
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
+		#amp_out = torch.zeros((output.shape[0], X, Y, Z), requires_grad=False, device=self.device, dtype=float)
 		amp_out = torch.abs(obj_comp)
+
+		#input has the shape (n,1,X,Y,Z)
 
 		loss = self.pcc_loss(amp_out, input) 
 
@@ -1018,103 +1019,6 @@ class CNNTrain():
 		elif self.scheduler == 'ReduceLROnPlateau':
 			return TrainRLROP()
 
-		# for epoch in range(self.epochs):  # loop over the dataset multiple times
-		# 	train_loss_tmp = 0.0
-		# 	self.model.train()
-
-		# 	sw_op_flag = (epoch // self.op_step_size) % 2
-
-		# 	for ii, loader_batch_train in enumerate(self.loader_train, 0):
-				
-		# 		# get the inputs; data is a list of [inputs, labels]
-		# 		# x_train = input
-		# 		# y_train = target 
-		# 		x_train, y_train, z_train = loader_batch_train
-		# 		x_train, y_train, z_train = Variable(x_train).to(self.device), Variable(y_train).to(self.device), Variable(z_train).to(self.device)
-
-		# 		# sets all the gradients to zero; to avoid accumulation of gradients from the previous epoch
-		# 		# this is potentially causing accumlation of gradients when we are switching from one optimizer to the next. best to set both to zero anyway?
-				
-		# 		#self.optimiser1.zero_grad()
-		# 		#self.optimiser2.zero_grad()
-		# 		for param in self.model.parameters():
-		# 			param.grad = None
-
-
-		# 		#forward propagation
-		# 		y_train_predict = self.model.forward(x_train)
-
-		# 		#define the loss and then backward propagate
-		# 		loss1 = self.criterion(y_train_predict, y_train, z_train)
-				
-		# 		loss1.backward()
-
-		# 		#incorporate a clip on the values of the gradients, to avoid exploding gradients 
-		# 		clip_grad_norm_(self.model.coder.parameters(), 2)
-		# 		clip_grad_norm_(self.model.ppha.parameters(), 2)
-		# 		clip_grad_norm_(self.model.aamp.parameters(), 1.25)
-
-		# 		#optimize the weights and biases
-		# 		# if sw_op_flag == 0:
-		# 		# 	self.optimiser1.step()
-		# 		# elif sw_op_flag == 1:
-		# 		# 	self.optimiser2.step()
-
-		# 		self.optimiser1.step()
-
-		# 		train_loss_tmp += loss1.item()
-				
-		# 		# print info if needed
-		# 		if self.verbose:
-		# 			if ii % self.print_every == 0: 
-		# 				print('[%d, %5d] Batch loss:: train %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
-
-		# 	#update the learning rate
-		# 	# if sw_op_flag == 0:
-		# 	# 	self.scheduler1.step()
-		# 	# 	lr = self.GetLR(self.optimiser1)
-		# 	# 	print('Using Optimiser 1')
-		# 	# elif sw_op_flag == 1:
-		# 	# 	self.scheduler2.step()
-		# 	# 	lr = self.GetLR(self.optimiser2)
-		# 	# 	print('Using Optimiser 2')
-			
-		# 	# self.scheduler1.step()
-		# 	# lr = self.GetLR(self.optimiser1)
-			
-		# 	#validation step
-		# 	with torch.no_grad():
-		# 		valid_loss_tmp = 0.0
-		# 		self.model.eval() # turn off some specific parts of the model for the evaluation with model.eval()
-		# 		for loader_batch_test in self.loader_test:
-		# 			x_test, y_test, z_test = loader_batch_test
-		# 			x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
-		# 			y_pred = self.model.forward(x_test)
-		# 			loss2 = self.criterion(y_pred, y_test, z_test)
-		# 			valid_loss_tmp += loss2.item()
-			
-		# 	print(len(self.loader_test))
-		# 	self.train_loss.append(train_loss_tmp / len(self.loader_train))
-		# 	self.valid_loss.append(valid_loss_tmp / len(self.loader_test))
-
-		# 	self.scheduler1.step(self.valid_loss[-1])
-		# 	lr = self.GetLR(self.optimiser1)
-
-		# 	if np.isfinite(self.train_loss[-1]):
-		# 		pass
-		# 	else:
-		# 		print('model is breaking')
-		# 		break
-
-		# 	# if ii % print_every == 0:                  # print every mini-batches
-		# 	if self.verbose:
-		# 		print('Epoch-loss:: train %.5f  valid %.5f lr %.5f' %(self.train_loss[-1], self.valid_loss[-1], lr)) 
-		# 		print('-'*20)
-		
-		# 	# save
-		# 	if epoch % (self.epochs -1) == 0:
-		# 		self.SaveModel(epoch)
-	##
 
 	def one_Train(self, fname, mask=100):
 
@@ -1219,7 +1123,7 @@ class CNNTrain():
 		f.write(params)
 		f.close()
 
-class CNNPredict():
+class CNNPredict(CNNTrain):
 	"""
 	a class to be used for prediction after obtaining a trained neural network
 	still to be tested
@@ -1231,6 +1135,7 @@ class CNNPredict():
 		self.output = None
 		self.devive = None
 		self.model = None
+		self.torcharray = None
 		self.device_type = device_type
 
 
@@ -1288,21 +1193,21 @@ class CNNPredict():
 		j = self.expdata.shape[1]
 		k = self.expdata.shape[2]
 
-		torcharray = np.zeros((1,1,i,j,k), dtype=np.double)
-		torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
-		torcharray = torch.from_numpy(torcharray)
+		self.torcharray = np.zeros((1,1,i,j,k), dtype=np.double)
+		self.torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
+		self.torcharray = torch.from_numpy(self.torcharray)
 		
 
 		if torch.cuda.is_available() and self.device_type=='cuda':
 			self.model.load_state_dict(torch.load(self.trained_network))
-			torcharray = torcharray.to(device = self.device, dtype = torch.float)
+			self.torcharray = self.torcharray.to(device = self.device, dtype = torch.float)
 		else:
 			self.model.load_state_dict(torch.load(self.trained_network, map_location = 'cpu'))
 
 		self.model.eval()
 			
 		with torch.no_grad():
-			sequence = self.model(torcharray)
+			sequence = self.model(self.torcharray)
 			
 		sequence = sequence.cpu()
 
@@ -1315,6 +1220,66 @@ class CNNPredict():
 		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 
 		np.save(self.output, com)
+		
+	def iterate_predict(self):
+
+		x_input = self.torcharray
+		i = self.expdata.shape[0]
+		j = self.expdata.shape[1]
+		k = self.expdata.shape[2]
+
+		for epoch in range(self.epochs):  # loop over the dataset multiple times
+			train_loss_tmp = 0.0
+			self.model.train()
+
+
+			self.optimiser1.zero_grad()
+
+			y_output = self.model.forward(x_input)
+
+			loss1 = self.criterion(y_output, x_input)
+
+			loss1.backward
+
+			train_loss_tmp += loss1.item()
+
+			clip_grad_norm_(self.model.coder.parameters(), 2)
+			clip_grad_norm_(self.model.ppha.parameters(), 2)
+			clip_grad_norm_(self.model.aamp.parameters(), 1.25)
+
+			self.optimiser1.step
+
+			self.scheduler1.step()
+			lr = self.GetLR(self.optimiser1)
+
+			self.train_loss.append(train_loss_tmp)
+
+			if np.isfinite(self.train_loss[-1]):
+				pass
+			else:
+				print('model is breaking')
+				break
+
+			if self.verbose:
+				print('Epoch-loss:: train %.5f   lr %.5f' %(self.train_loss[-1], lr)) 
+				print('-'*20)
+
+			if epoch % (self.epochs -1) == 0:
+				with torch.no_grad():
+					sequence = self.model(self.torcharray)
+				
+			
+			amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
+			pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
+
+			amp[:] = sequence[0,0,:,:,:]
+			pha[:] = sequence[0,1,:,:,:]
+
+			com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
+
+			np.save('iter_'+self.output, com)
+
+	
 
 
 if __name__ == '__main__':
@@ -1342,4 +1307,3 @@ if __name__ == '__main__':
 	mynn.TrainNN()
 	mynn.SaveParameters()
 	mynn.PlotLoss()
-
