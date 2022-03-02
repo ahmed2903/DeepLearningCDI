@@ -1129,7 +1129,7 @@ class CNNPredict(CNNTrain):
 	still to be tested
 	"""
 	def __init__(self, device_type='cuda'):
-
+		super().__init__()
 		self.expdata = None
 		self.trained_network = None
 		self.output = None
