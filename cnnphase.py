@@ -550,7 +550,7 @@ class CNNTrain():
 					x_test, y_test, z_test = loader_batch_test
 					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
 					y_pred = self.model.forward(x_test)
-					loss2 = self.criterion(y_pred, y_test, z_test)
+					loss2 = self.criterion(y_pred, y_test, z_test, **loss_args)
 					valid_loss_tmp += loss2.item()
 			# Update graph data
 			self.train_loss.append(train_loss_tmp / len(self.loader['train']))
