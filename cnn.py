@@ -1239,7 +1239,7 @@ class CNNPredict(CNNTrain):
 
 			loss1 = self.criterion(y_output, x_input)
 
-			loss1.backward
+			loss1.backward()
 
 			train_loss_tmp += loss1.item()
 
@@ -1247,7 +1247,7 @@ class CNNPredict(CNNTrain):
 			clip_grad_norm_(self.model.ppha.parameters(), 2)
 			clip_grad_norm_(self.model.aamp.parameters(), 1.25)
 
-			self.optimiser1.step
+			self.optimiser1.step()
 
 			self.scheduler1.step()
 			lr = self.GetLR(self.optimiser1)
@@ -1265,10 +1265,13 @@ class CNNPredict(CNNTrain):
 				print('-'*20)
 
 			if epoch % (self.epochs -1) == 0:
+				self.model.eval()
 				with torch.no_grad():
-					sequence = self.model(self.torcharray)
+					sequence = self.model.forward(self.torcharray)
 				
 			
+			sequence = sequence.cpu()
+
 			amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
 			pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
 
