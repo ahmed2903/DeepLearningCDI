@@ -1269,7 +1269,6 @@ class CNNPredict(CNNTrain):
 				with torch.no_grad():
 					sequence = self.model.forward(self.torcharray)
 				
-			
 			sequence = sequence.cpu()
 
 			amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
