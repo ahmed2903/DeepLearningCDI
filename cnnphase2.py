@@ -1,16 +1,15 @@
 # ###########################################
 # Filename: cnnphase.py
 # Convolution Neural Network for Phase Retrieval.
-# Derived from work by Lonlong Wu.
+# Derived from work by Longlong Wu.
 # 
 # Authors: Marcus Newton, Ahmed Mohamed.
 # 
-# Version 0.1
+# Version 0.3
 # Licence: GNU GPL 3
 #
 # ###########################################
 
-from ast import Add
 import numpy as np
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
@@ -18,6 +17,7 @@ plt.switch_backend('agg')
 from time import strftime
 import os
 import inspect
+import threading
 
 import torch
 import torch.nn as nn
@@ -85,7 +85,7 @@ class down(nn.Module):
 	Main encoder part
 	Applying a maxpooling operation followed by the convultional layer
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(down, self).__init__()
 		self.mpconv = nn.Sequential(
 			nn.MaxPool3d(kernel_size=(2, 2, 2)),
@@ -102,7 +102,7 @@ class up01(nn.Module):
 	Amplitude recosntruction
 	Upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.3):
 		super(up01, self).__init__()
 		self.upconv = nn.Sequential(
 			nn.Upsample(scale_factor=2, mode='nearest'),
@@ -118,7 +118,7 @@ class up02(nn.Module):
 	phase reconstriction
 	upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
 		super(up02, self).__init__()
 		self.upconv = nn.Sequential(
 			nn.Upsample(scale_factor=2, mode='nearest'),
@@ -211,6 +211,7 @@ class CNNTrain():
 		self.verbose = True
 		self.print_every = 8
 		self.datestr = strftime("%Y-%m-%d_%H.%M")
+		self.nthreads = len(os.sched_getaffinity(0))
 	def GetKwArgs(self, obj, kwargs):
 		obj_sigs = []
 		obj_args = {}
@@ -240,8 +241,25 @@ class CNNTrain():
 		shp = self.data['input_data'].shape
 		self.data['target_data1'] = np.zeros((shp[0], shp[-3], shp[-2], shp[-1]), dtype='float32')
 		self.data['target_data1'][:] = self.data['input_data'][:,0,:,:,:]
-		for i in range(shp[0]):
-			self.data['target_data1'][i,:,:,:] = np.fft.fftshift(self.data['target_data1'][i,:,:,:])
+		self.WrapAroundData(self.data['target_data1'])
+	def WrapAroundData(self, data):
+		def CalcThread(idxrange):
+			for i in range(idxrange[0], idxrange[1], 1):
+				data[i,:,:,:] = np.fft.fftshift(data[i,:,:,:])
+		xs = []
+		n = data.shape[0]
+		blk = n//self.nthreads
+		for i in range(self.nthreads):
+			xs.append([blk*i, blk*(i+1)])
+		xs[-1][1] = n
+		threads = []
+		for t in range(self.nthreads):
+			thread = threading.Thread(target=CalcThread, args=(xs[t],))
+			thread.start()
+			threads.append(thread)
+		for thread in threads:
+			if thread.is_alive():
+				thread.join()
 	def SetTargetData(self, fname):
 		"""
 		Load target data from training set.
@@ -308,7 +326,7 @@ class CNNTrain():
 		data_xyz = torch.utils.data.TensorDataset(dx, dy, dz)
 		
 		trainloader = DataLoader(data_xyz,
-					   sampler=sampler, shuffle=False, batch_size = self.batch_size, num_workers=0)
+					   sampler=sampler, shuffle=False, batch_size = self.batch_size, num_workers=num_workers)
 
 		del datax, datay, dataz, dx, dy, dz, data_xyz
 		return trainloader
@@ -497,6 +515,7 @@ class CNNTrain():
 									gamma=1.0, # loss ratio Fourier amp
 									rs_pcc=False # Use Pearson for Real space}
 		"""
+		self.datestr = strftime("%Y-%m-%d_%H.%M")
 		loss_args = self.GetKwArgs(self.criterion, loss_params)
 		for epoch in range(self.hyperpars['epochs']):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
@@ -566,14 +585,13 @@ class CNNTrain():
 			if self.verbose:
 				print('Epoch-loss: train %.5f  valid %.5f lr %.2e' %(self.train_loss[-1], self.valid_loss[-1], lr)) 
 			# Save
-			if epoch % (self.hyperpars['epochs'] -1) == 0:
+			if (epoch != 0) and (epoch % (self.hyperpars['epochs'] -1) == 0):
 				self.SaveModel(epoch)
 
 	def SaveModel(self, epoch=0):
 		"""
 		Save model.
 		"""
-		self.datestr = strftime("%Y-%m-%d_%H.%M")
 		torch.save(self.model.state_dict(),'CP{}'.format(epoch+1)+'_'+self.datestr+'.pth')
 	def SaveParameters(self):
 		"""
@@ -599,6 +617,9 @@ class CNNTrain():
 		f = open('CNN_Training_Params_'+self.datestr+'.txt', "w")
 		f.write(params)
 		f.close()
+	def SaveLoss(self):
+		lossdata = np.array([self.train_loss, self.valid_loss])
+		np.save('lossdata_'+self.datestr+'.npy', lossdata)
 	def PlotLoss(self):
 		"""
 		Plot the loss values.
@@ -611,15 +632,13 @@ class CNNTrain():
 		#plt.show()
 
 
-class CNNPredict(CNNTrain):
+class CNNPredictOld():
 	"""
 	Prediction from trained neural network.
 	"""
 	def __init__(self):
-		super().__init__()
 		self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 		self.expdata = None
-		self.torcharray = None
 		self.trained_network = None
 		self.output = None
 		self.model = None
@@ -633,25 +652,23 @@ class CNNPredict(CNNTrain):
 			if key in obj_sigs:
 				obj_args[key] = value
 		return obj_args
-
-	# def SetDevice(self, device='cuda'):
-	# 	"""
-	# 	Sets the device to either CPU ('cpu') or GPU ('cuda'), if available.
-	# 	"""
-	# 	if torch.cuda.is_available() and device == 'cuda':
-	# 		self.device = torch.device("cuda")
-	# 	else:
-	# 		self.device = torch.device("cpu")
-
-	# def SetModel(self, model, **kwargs):
-	# 	"""
-	# 	Selecting the model to be used for the network.
-	# 	Keywords are passed to model if they exist in the model.
-	# 	"""
-	# 	model_args = self.GetKwArgs(model, kwargs)
-	# 	self.model = model(**model_args).to(self.device)
-	# 	if self.device.type == "cuda" and torch.cuda.device_count() > 1:
-	# 		self.model = nn.DataParallel(self.model)
+	def SetDevice(self, device='cuda'):
+		"""
+		Sets the device to either CPU ('cpu') or GPU ('cuda'), if available.
+		"""
+		if torch.cuda.is_available() and device == 'cuda':
+			self.device = torch.device("cuda")
+		else:
+			self.device = torch.device("cpu")
+	def SetModel(self, model, **kwargs):
+		"""
+		Selecting the model to be used for the network.
+		Keywords are passed to model if they exist in the model.
+		"""
+		model_args = self.GetKwArgs(model, kwargs)
+		self.model = model(**model_args).to(self.device)
+		if self.device.type == "cuda" and torch.cuda.device_count() > 1:
+			self.model = nn.DataParallel(self.model)
 	def SetExpData(self, fname, mask=100, square_root=True):
 		"""
 		Set diffraction data used for prediction.
@@ -666,13 +683,90 @@ class CNNPredict(CNNTrain):
 			self.expdata = np.sqrt(self.expdata)
 		max = 1.0/self.expdata.max()
 		self.expdata = self.expdata * max
+	def SetTrainedNN(self, fname):
+		"""
+		Load the trained neural network.
+		Must be a .pth file.
+		"""
+		self.trained_network = fname
+	def SetOutputFile(self, fname):
+		"""
+		Set output file, i.e. the 
+		reconstructed object.
+		"""
+		self.output = fname
+	def Predict(self):
+		"""
+		Forward propagate the diffraction pattern 
+		through the trained neural network and  
+		obtain an output complex object 
+		"""
+		i = self.expdata.shape[0]
+		j = self.expdata.shape[1]
+		k = self.expdata.shape[2]
+
+		torcharray = np.zeros((1,1,i,j,k), dtype=np.float32)
+		torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
+		torcharray = torch.from_numpy(torcharray)
+		
+		if self.device.type == 'cuda':
+			self.model.load_state_dict(torch.load(self.trained_network))
+			torcharray = torcharray.to(device = self.device, dtype = torch.float)
+		else:
+			self.model.load_state_dict(torch.load(self.trained_network, map_location = 'cpu'))
+
+		self.model.eval()
+			
+		with torch.no_grad():
+			sequence = self.model(torcharray)
+			
+		sequence = sequence.cpu()
+
+		amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
+		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
+
+		amp[:] = sequence[0,0,:,:,:]
+		pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
+		pha[:] -= np.pi
+
+		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
+
+		np.save(self.output, com)
+
+
+class CNNPredict(CNNTrain):
+	"""
+	Prediction from trained neural network.
+	"""
+	def __init__(self):
+		super().__init__()
+		self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+		self.expdata = None
+		self.torcharray = None
+		self.trained_network = None
+		self.output = None
+		self.model = None
+	def SetExpData(self, fname, mask=100, square_root=True):
+		"""
+		Set diffraction data used for prediction.
+		Mask out the noise by selecting a threshold 
+		value below which everything is set to zero.
+		Normalizes the array to [0,1] interval.
+		Square root if data is intensity.
+		"""
+		self.expdata = np.abs(np.load(fname))
+		self.expdata[self.expdata < mask] = 0.0
+		if square_root:
+			self.expdata = np.sqrt(self.expdata)
+		max = 1.0/self.expdata.max()
+		self.expdata = self.expdata * max
+		
+		self.expdata[:] = np.fft.fftshift(self.expdata)
 
 		i,j,k = self.expdata.shape
 		self.torcharray = np.zeros((1,1,i,j,k), dtype=np.float32)
 		self.torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
 		self.torcharray = torch.from_numpy(self.torcharray)
-
-
 	def SetTrainedNN(self, fname):
 		"""
 		Load the trained neural network.
@@ -685,7 +779,6 @@ class CNNPredict(CNNTrain):
 			self.torcharray = self.torcharray.to(device = self.device, dtype = torch.float)
 		else:
 			self.model.load_state_dict(torch.load(self.trained_network, map_location = 'cpu'))
-
 	def SetOutputFile(self, fname):
 		"""
 		Set output file, i.e. the 
@@ -693,7 +786,6 @@ class CNNPredict(CNNTrain):
 		"""
 		self.output = fname
 	def all_loss(self, output, input):
-
 		X,Y,Z = self.expdata.shape
 		X2 = X//2
 		X4 = X//4
@@ -710,15 +802,12 @@ class CNNPredict(CNNTrain):
 
 		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
 		loss = self.pcc_loss(amp_out, input) 
-
 		return loss
-	
 	def criterion(self, output, input):
 		"""
 		Call the desired loss function.
 		"""
 		return self.all_loss(output, input)	
-
 	def Predict(self):
 		"""
 		Forward propagate the diffraction pattern 
@@ -737,14 +826,14 @@ class CNNPredict(CNNTrain):
 		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
 
 		amp[:] = sequence[0,0,:,:,:]
-		pha[:] = sequence[0,1,:,:,:]
+		pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
+		pha[:] -= np.pi
 
 		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 
 		np.save(self.output, com)
 
 	def TransferPredict(self):
-
 		for epoch in range(self.hyperpars['epochs']):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
 			self.model.train()
@@ -799,22 +888,28 @@ class CNNPredict(CNNTrain):
 			pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
 
 			amp[:] = sequence[0,0,:,:,:]
-			pha[:] = sequence[0,1,:,:,:]
+			pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
+			pha[:] -= np.pi
 
 			com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 
 			np.save('iter_'+self.output, com)
+	def SaveTrainLoss(self):
+		lossdata = np.array(self.train_loss)
+		np.save('trainlossdata_'+self.datestr+'.npy', lossdata)
 
 
-if __name__ == '__main__':
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 
+def Train():
 	cnn = CNNTrain()
 	cnn.SetDevice('cuda')
 	cnn.SetInputData('fs_amps.npy')
 	cnn.SetTargetData('rs_objs.npy')
 	cnn.SetModel(NNModel)
-	cnn.SetValidSize(0.05)
+	cnn.SetValidSize(0.1)
 	cnn.SplitData()
-	cnn.SetBatchSize(16)
+	cnn.SetBatchSize(5)
 	cnn.LoadSplitTrain(loadtype='train')
 	cnn.LoadSplitTrain(loadtype='test')
 	#cnn.LoadWeights("CP.pth")
@@ -822,7 +917,7 @@ if __name__ == '__main__':
 	#cnn.InitialiseWeights(nn.init.xavier_normal_)
 	cnn.SetLRStepSize(25)
 	cnn.AddLR(1e-4)
-	cnn.AddLR(1e-5)
+	cnn.AddLR(1e-6)
 	cnn.SetGamma(0.75)
 	cnn.AddOptimiser(optim.ASGD)
 	cnn.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
@@ -830,35 +925,45 @@ if __name__ == '__main__':
 	#cnn.AddOptimiser(optim.RMSprop, alpha=0.99, eps=1e-08, weight_decay=0, momentum=0.9, centered=False)
 	cnn.AddScheduler(ss.StepLR)
 	cnn.AddScheduler(ss.StepLR)
-	cnn.SetNEpochs(300)
-	cnn.SetOpStep(150)
+	cnn.SetNEpochs(50)
+	cnn.SetOpStep(10)
 	cnn.TrainNN(rs_pcc=False)
 	cnn.SaveParameters()
+	cnn.SaveLoss()
 	cnn.PlotLoss()
-	
-	"""
-predict = CNNPredict()
-predict.SetDevice('cuda')
-predict.SetModel(NNModel)
-predict.SetExpData('DeepLeaningAmp.npy', mask=500)
-predict.SetTrainedNN("CP.pth")
-predict.SetOutputFile('outputGold02.py')
-predict.SetLRStepSize(200)
-predict.AddLR(1e-3)
-predict.AddLR(5e-4)
-predict.AddLR(1e-4)
-predict.AddLR(5e-5)
-predict.SetGamma(0.9)
-predict.AddOptimiser(optim.ASGD)
-predict.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
-predict.AddOptimiser(optim.ASGD)
-predict.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
-predict.AddScheduler(ss.StepLR)
-predict.AddScheduler(ss.StepLR)
-predict.AddScheduler(ss.StepLR)
-predict.AddScheduler(ss.StepLR)
-predict.SetNEpochs(10000)
-predict.SetOpStep(2000)
-predict.TransferPredict()
-predict.PlotLoss()
-	"""
+
+def Predict():
+	predict = CNNPredict()
+	predict.SetDevice('cuda')
+	#predict.SetDevice('cpu')
+	predict.SetModel(NNModel)
+	predict.SetExpData('expdata.npy', mask=500, square_root=True)
+	predict.SetTrainedNN("CP.pth")
+	predict.SetOutputFile('output.npy')
+	predict.SetLRStepSize(25)
+	predict.AddLR(1e-3)
+	predict.AddLR(5e-4)
+	predict.AddLR(1e-4)
+	predict.AddLR(5e-5)
+	predict.SetGamma(0.9)
+	predict.AddOptimiser(optim.ASGD)
+	predict.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
+	predict.AddOptimiser(optim.ASGD)
+	predict.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
+	predict.AddScheduler(ss.StepLR)
+	predict.AddScheduler(ss.StepLR)
+	predict.AddScheduler(ss.StepLR)
+	predict.AddScheduler(ss.StepLR)
+	predict.SetNEpochs(100)
+	predict.SetOpStep(10)
+	predict.TransferPredict()
+	predict.SaveTrainLoss()
+	predict.PlotLoss()
+
+
+if __name__ == '__main__':
+	Train()
+	#Predict()
+
+
+
