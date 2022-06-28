@@ -1,4 +1,4 @@
-from cnnphase import *
+from cnnphaseAh import *
 
 predict = CNNPredict()
 predict.SetDevice('cuda')
