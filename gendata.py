@@ -36,7 +36,7 @@ class GenData():
 		self.rsmask = rsmask
 	def SetFSMask(self, fsmask = 0.01):
 		self.fsmask = fsmask
-	def SetShape(self, shape="octahedron"):
+	def SetMorphology(self, shape="octahedron"):
 		if shape == "octahedron":
 			self.morph_fn = self.MakeOctahedron
 		elif shape == "hexprism":
@@ -214,7 +214,7 @@ class GenData():
 		self.rs_obj = rs_amp_phase
 		self.fs_amp = fs_amp
 	# #
-	def SaveData(self, fsname="fs_amps.npy", rsname="rs_objs.npy"):
+	def SaveData(self, fsname="fs_amps_YMO_CP02.npy", rsname="rs_objs_YMO_CP02.npy"):
 		if self.rs_obj is not None:
 			np.save(rsname, self.rs_obj)
 		if self.fs_amp is not None:
@@ -222,13 +222,10 @@ class GenData():
 
 if __name__ == '__main__':
 	d = GenData()
-	d.SetShape([32,32,32])
-	d.SetN(100)
-	d.SetShape("hexprism")
-	#d.SetShape("octahedron")
-	#d.SetShape("monoclinic")
+	d.SetShape([176,144,196])
+	d.SetN(500)
+	d.SetMorphology("hexprism")
+	#d.SetMorphology("octahedron")
+	#d.SetMorphology("monoclinic")
 	d.GenShapeData()
 	d.SaveData()
-	
-
-
