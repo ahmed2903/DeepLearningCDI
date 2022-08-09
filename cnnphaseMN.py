@@ -158,22 +158,22 @@ class NNModel(nn.Module):
 	'''
 	summing up all the operations to create the full network
 	'''
-	def __init__(self, n_channels=1, n_classes=1, checkpoints=False):
+	def __init__(self, n_channels=1, n_classes=1, momentum = 0.9, checkpoints = False):
 		super(NNModel, self).__init__()
 		self.inconv = inconv(n_channels, 64)
-		self.down1 = down(64, 128, checkpoints=checkpoints)
-		self.down2 = down(128, 256, checkpoints=checkpoints)
-		self.down3 = down(256, 512, checkpoints=checkpoints)
-		self.down4 = down(512, 1024, checkpoints=checkpoints)
+		self.down1 = down(64, 128, momentum = momentum, checkpoints = checkpoints)
+		self.down2 = down(128, 256, momentum = momentum, checkpoints = checkpoints)
+		self.down3 = down(256, 512, momentum = momentum, checkpoints = checkpoints)
+		self.down4 = down(512, 1024, momentum = momentum, checkpoints = checkpoints)
 
-		self.up01 = up01(512, 256, checkpoints=checkpoints)
-		self.up02 = up01(256, 128, checkpoints=checkpoints)
-		self.up03 = up01(128, 64, checkpoints=checkpoints)
+		self.up01 = up01(512, 256, momentum = momentum, checkpoints = checkpoints)
+		self.up02 = up01(256, 128, momentum = momentum, checkpoints = checkpoints)
+		self.up03 = up01(128, 64, momentum = momentum, checkpoints = checkpoints)
 		self.outc00 = outconv(64, n_classes)
 
-		self.up11 = up01(512, 256, checkpoints=checkpoints)
-		self.up12 = up01(256, 128, checkpoints=checkpoints)
-		self.up13 = up01(128, 64, checkpoints=checkpoints)
+		self.up11 = up01(512, 256, momentum = momentum, checkpoints = checkpoints)
+		self.up12 = up01(256, 128, momentum = momentum, checkpoints = checkpoints)
+		self.up13 = up01(128, 64, momentum = momentum, checkpoints = checkpoints)
 		self.outc11 = outconv(64, n_classes)
 	
 	def forward(self, x):
@@ -784,6 +784,8 @@ class CNNPredict(CNNTrain):
 		self.torcharray = np.zeros((1,1,i,j,k), dtype=np.float32)
 		self.torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
 		self.torcharray = torch.from_numpy(self.torcharray)
+
+		del self.expdata 
 	def SetTrainedNN(self, fname):
 		"""
 		Load the trained neural network.

@@ -5,10 +5,26 @@
 # 
 # Authors: Marcus Newton, Ahmed Mohamed.
 # 
-# Version 0.3
+# Version 0.6
 # Licence: GNU GPL 3
 #
-# ###########################################
+# Version update: 
+# 1) Update to the network archeticture - incorporating sigmoid and tanh function in the final layer
+#		the phase generation range will need to be [-1,1] to satisfy the tanh activation function
+#		will help determine if the phase jumps are artificial or real 
+#		COMPLETE
+# 2) Incorporating a cyclic LR function opposed to StepLR 
+# 3) A Shrink Wrap function before the Fourier Transform operation  
+# 		COMPLETE
+# 4) momentum in the batch normalization update
+# 5) Slope of the Leaky Relu activation function 0.2 --> 0.01
+# 6) Upsample mode : nearest --> trilinear
+#		will help with sudden jumps in the amplitude and phase 
+# 		COMPLETE
+# 7) Normalizing the amplitude instead of clipping it to a range 
+# 		COMPLETE
+# 
+# # ###########################################
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -30,7 +46,6 @@ from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data import Dataset, DataLoader
 from torch.autograd import Variable
 from torch.nn.utils import clip_grad_norm_, clip_grad_value_
-from torchsummary import summary
 from torch.utils.checkpoint import checkpoint_sequential
 from torch.cuda.amp import GradScaler
 
@@ -45,7 +60,7 @@ class double_conv(nn.Module):
 
 	Values that can be tuned are: momentum and Grad of the leaky relu 
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
 		super(double_conv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True), 
@@ -67,7 +82,7 @@ class inconv(nn.Module):
 	"""
 	Same as the previous convolutional layer, however, the second convolution is summarized in one operation opposed to three
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
 		super(inconv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=True), 
@@ -96,9 +111,9 @@ class down(nn.Module):
 			double_conv(in_ch, out_ch, LRLUGrad, eps, momentum),
 		)
 	def forward(self, x):
-		if self.checkpoints: 
-			pass
-		else: 
+		if self.checkpoints:
+			x = checkpoint_sequential(self.mpconv, 2, x)
+		else:
 			x = self.mpconv(x)
 		return x
 
@@ -109,17 +124,17 @@ class up01(nn.Module):
 	Amplitude recosntruction
 	Upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9, checkpoints = False):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9, checkpoints=False):
 		super(up01, self).__init__()
 		self.checkpoints = checkpoints
 		self.upconv = nn.Sequential(
-			nn.Upsample(scale_factor=2, mode='nearest'),
+			nn.Upsample(scale_factor=2, mode='trilinear'),
 			double_conv(in_ch, out_ch, LRLUGrad, eps, momentum),
 		)
 	def forward(self, x):
-		if self.checkpoints: 
-			pass
-		else: 
+		if self.checkpoints:
+			x = checkpoint_sequential(self.upconv, 2, x)
+		else:
 			x = self.upconv(x)
 		return x
 
@@ -129,17 +144,17 @@ class up02(nn.Module):
 	phase reconstriction
 	upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9, checkpoints = False):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9, checkpoints=False):
 		super(up02, self).__init__()
 		self.checkpoints = checkpoints
 		self.upconv = nn.Sequential(
-			nn.Upsample(scale_factor=2, mode='nearest'),
+			nn.Upsample(scale_factor=2, mode='trilinear'),
 			double_conv(in_ch, out_ch, LRLUGrad, eps, momentum),
 		)
 	def forward(self, x):
-		if self.checkpoints: 
-			pass
-		else: 
+		if self.checkpoints:
+			x = checkpoint_sequential(self.upconv, 2, x)
+		else:
 			x = self.upconv(x)
 		return x
 
@@ -154,7 +169,7 @@ class outconv(nn.Module):
 	def forward(self, x):
 		x = self.conv(x)
 		return x
-	
+
 class NNModel(nn.Module):
 	'''
 	summing up all the operations to create the full network
@@ -176,16 +191,15 @@ class NNModel(nn.Module):
 		self.up12 = up01(256, 128, momentum = momentum, checkpoints = checkpoints)
 		self.up13 = up01(128, 64, momentum = momentum, checkpoints = checkpoints)
 		self.outc11 = outconv(64, n_classes)
-
+	
 	def forward(self, x):
-		x = self.inconv(x) 
+		x = self.inconv(x)
 		x = self.down1(x)
 		x = self.down2(x)
 		x = self.down3(x)
 		x = self.down4(x)
-
-
-		x1 = x[:, 0::2, :, :] #decicating half the channels for one branch
+		
+		x1 = x[:, 0::2, :, :] #dedicating half the channels for one branch
 		x1 = self.up01(x1)
 		x1 = self.up02(x1)
 		x1 = self.up03(x1)
@@ -197,12 +211,43 @@ class NNModel(nn.Module):
 		x2 = self.up13(x2)
 		x2 = self.outc11(x2)
 
-		x1 = torch.relu(x1) #activation function in the final layer is a relu opposed to a leakReLU
-		x2 = torch.relu(x2) #activation function in the final layer is a relu opposed to a leakReLU
-		x2 = torch.clamp(x2, min=0, max=1) #clamping the phase values to be between 0 and 1
-		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
+		#activation function is a Sigmoid for the amplitude branch
+		#activation function is a Tanh for the phase branch
 
-		return x0
+		s = nn.Sigmoid()
+		t = nn.Tanh()
+
+		x1 = s(x1) 
+		x2 = t(x2) 
+
+
+		# Normalizing the output amplitude 
+		max_A = torch.amax(x1, dim=[-1, -2, -3], keepdim=True)
+		x1 = torch.div(x1,max_A+1e-6) #Prevent zero div
+
+		# Define support with a threshold wrt amplitude such that only the phase of the object is incorporated in the loss 
+		sw_thresh = 0.1
+
+		mask = torch.tensor([0,1],dtype=x1.dtype, device=x1.device)
+		x1 = torch.where(x1<sw_thresh,mask[0],x1)
+
+		support = torch.zeros(x1.shape,device=x1.device)
+		support = torch.where(x1<sw_thresh,mask[0],mask[1])
+
+
+		# clamping the phase channel to -1,1 then shifting on -pi,pi scale 
+		x2 = torch.clamp(x2, min=-1, max=1) #clamping the phase values # Not really needed if tanh function
+		x2 = x2 * np.pi
+
+		# Combining the two branches into one complex object then taking the absolute value of fourier transform 
+		complex_x = torch.complex(x1*torch.cos(x2),x1*torch.sin(x2))
+		y = torch.fft.fftn(complex_x,dim=(-3,-2,-1))
+		y = torch.fft.fftshift(y,dim=(-3,-2,-1)) #FFT shift will move the wrong dimensions if not specified
+		y = torch.abs(y)
+		
+		#x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
+		del max_A
+		return y, complex_x, x1, x2, support
 
 
 
@@ -224,7 +269,7 @@ class CNNTrain():
 		self.train_loss = []
 		self.valid_loss = []
 		self.verbose = True
-		self.print_every = 5000
+		self.print_every = 100
 		self.datestr = strftime("%Y-%m-%d_%H.%M")
 		self.nthreads = len(os.sched_getaffinity(0))
 	def GetKwArgs(self, obj, kwargs):
@@ -242,7 +287,6 @@ class CNNTrain():
 		Sets the device to either CPU ('cpu') or GPU ('cuda'), if available.
 		"""
 		if torch.cuda.is_available() and device == 'cuda':
-			torch.cuda.empty_cache()
 			self.device = torch.device("cuda")
 		else:
 			self.device = torch.device("cpu")
@@ -288,7 +332,6 @@ class CNNTrain():
 		Selecting the model to be used for the network.
 		Keywords are passed to model if they exist in the model.
 		"""
-
 		model_args = self.GetKwArgs(model, kwargs)
 		self.model = model(**model_args).to(self.device)
 		cuda_device_count = torch.cuda.device_count()
@@ -296,10 +339,6 @@ class CNNTrain():
 			self.cuda_device_count = cuda_device_count
 			self.model = nn.DataParallel(self.model)
 			self.model.to(self.device)
-		
-		print('Using %d GPUs'%cuda_device_count)
-		print(torch.cuda.memory_summary(device=None, abbreviated=False)	)
-
 	def SetValidSize(self, valid_size):
 		"""
 		Set the validation size of the training set
@@ -328,6 +367,9 @@ class CNNTrain():
 		"""
 		selects random samples to be used for the validation
 		puts batches of the traning set together
+		x_t = inputdata i.e diff data shape n,1,x,y,z
+		y_t = targetdata 0 i.e. object shape n,2,x/2,y/2,z/2 
+		z_t = targetdata 1 i.e. diff data, shape n,x,y,z
 		"""
 		datax = self.data['input_data'][index].astype('float32')
 		datay = self.data['target_data0'][index].astype('float32')
@@ -468,7 +510,7 @@ class CNNTrain():
 		vy = torch.abs(y - torch.mean(y))
 		loss = torch.mean(vx * vy) / (torch.sqrt(torch.mean(vx ** 2) * torch.mean(vy ** 2))+1e-40)
 		return 1.0 - loss
-	def all_loss(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def all_loss(self, output_amp, output_pha, output_diff, target, input, support, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
 		"""
 		Total loss in the training. 
 		loss1: amplitude channel.
@@ -476,6 +518,8 @@ class CNNTrain():
 		loss3: fourier transform of the object.
 		
 		All losses are merged together in a single loss function.
+
+		Monitoring the phase loss only within the support, the output_pha is multiplied by the support
 		"""
 		_, __, X,Y,Z = self.data['input_data'].shape
 		X2 = X//2
@@ -486,29 +530,26 @@ class CNNTrain():
 		Z4 = Z//4
 		
 		if rs_pcc:
-			loss1 = self.pcc_loss(output[:, 0, :, :, :], target[:, 0, :, :, :])
-			loss2 = self.pcc_loss(output[:, 1, :, :, :], target[:, 1, :, :, :])
+			loss1 = self.pcc_loss(output_amp, target[:, 0, :, :, :])
+			loss2 = self.pcc_loss(output_pha*support, target[:, 1, :, :, :])
 		else:
-			loss1 = self.chi_loss(output[:, 0, :, :, :], target[:, 0, :, :, :])
-			loss2 = self.chi_loss(output[:, 1, :, :, :], target[:, 1, :, :, :])
+			loss1 = self.chi_loss(output_amp, target[:, 0, :, :, :])
+			loss2 = self.chi_loss(output_pha*support, target[:, 1, :, :, :])
 
-		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
-		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
-		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
-		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
-		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
+		# padding the output diffraction pattern by X2 on each side to match the shape of the input 
+		pad = nn.ConstantPad3d(int(X4), 0)
+		output_diff = pad(output_diff)
 
-		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
-		loss3 = self.pcc_loss(amp_out, input) 
+		loss3 = self.pcc_loss(output_diff, input)
 		
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
 		return loss
 		
-	def criterion(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def criterion(self, output_amp, output_pha, output_diff, target, input, support, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
 		"""
 		Call the desired loss function.
 		"""
-		return self.all_loss(output, target, input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
+		return self.all_loss(output_amp = output_amp, output_pha = output_pha, output_diff= output_diff, target=target, input= input, support = support, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
 
 	def GetLR(self, optimiser):
 		"""
@@ -533,9 +574,13 @@ class CNNTrain():
 		"""
 		Perform the training of the network.
 		loss_params = {alpha=1.0, # loss ratio amp
-									beta=1.0, # loss ratio phase
-									gamma=1.0, # loss ratio Fourier amp
-									rs_pcc=False # Use Pearson for Real space}
+						beta=1.0, # loss ratio phase
+						gamma=1.0, # loss ratio Fourier amp
+						rs_pcc=False # Use Pearson for Real space}
+
+		x_train/test = inputdata i.e diff data shape n,1,x,y,z
+		y_train/test = targetdata0 i.e. object shape n,2,x/2,y/2,z/2 
+		z_train/test = targetdata1 i.e. diff data, shape n,x,y,z
 		"""
 		self.datestr = strftime("%Y-%m-%d_%H.%M")
 		loss_args = self.GetKwArgs(self.criterion, loss_params)
@@ -558,15 +603,11 @@ class CNNTrain():
 					if sw_op_flag == idi:
 						list(self.optimisers.values())[idi].zero_grad()
 				# Forward propagation
-				y_train_predict = self.model.forward(x_train)
+				y_diff_predict, _,y_amp_predict, y_pha_predict, supp = self.model.forward(x_train)
 				# Define the loss and then backward propagate
-				loss1 = self.criterion(y_train_predict, y_train, z_train, **loss_args)
+				loss1 = self.criterion(y_amp_predict, y_pha_predict, y_diff_predict, y_train, z_train, supp, **loss_args)
 				loss1.backward()
 				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
-				# Not recognised
-				#clip_grad_norm_(self.model.coder.parameters(), 2)
-				#clip_grad_norm_(self.model.ppha.parameters(), 2)
-				#clip_grad_norm_(self.model.aamp.parameters(), 1.25)
 				clip_grad_norm_(self.model.parameters(), max_norm = 10.0, norm_type=2)
 				# Optimise the weights and biases
 				for idi in range(sw_op):
@@ -576,7 +617,7 @@ class CNNTrain():
 				train_loss_tmp += loss1.item()
 				# print info if needed
 				if self.verbose:
-					if ii % self.print_every == 0: 
+					if ii % self.print_every == 0:
 						print('Epoch: %d, Batch: %5d, Batch loss: train: %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
 				# # Loop end
 			# Update learning rate with scheduler
@@ -591,8 +632,8 @@ class CNNTrain():
 				for loader_batch_test in self.loader['test']:
 					x_test, y_test, z_test = loader_batch_test
 					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
-					y_pred = self.model.forward(x_test)
-					loss2 = self.criterion(y_pred, y_test, z_test, **loss_args)
+					y_pred, _,amp_predict, pha_predict,supp = self.model.forward(x_test)
+					loss2 = self.criterion(amp_predict, pha_predict, y_pred, y_test, z_test, supp, **loss_args)
 					valid_loss_tmp += loss2.item()
 			# Update graph data
 			self.train_loss.append(train_loss_tmp / len(self.loader['train']))
@@ -657,108 +698,6 @@ class CNNTrain():
 		#plt.show()
 
 
-class CNNPredictOld():
-	"""
-	Prediction from trained neural network.
-	"""
-	def __init__(self):
-		self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-		self.expdata = None
-		self.trained_network = None
-		self.output = None
-		self.model = None
-	def GetKwArgs(self, obj, kwargs):
-		obj_sigs = []
-		obj_args = {}
-		for arg in inspect.signature(obj).parameters.values():
-			if not arg.default is inspect._empty:
-				obj_sigs.append(arg.name)
-		for key, value in kwargs.items():
-			if key in obj_sigs:
-				obj_args[key] = value
-		return obj_args
-	def SetDevice(self, device='cuda'):
-		"""
-		Sets the device to either CPU ('cpu') or GPU ('cuda'), if available.
-		"""
-		if torch.cuda.is_available() and device == 'cuda':
-			self.device = torch.device("cuda")
-		else:
-			self.device = torch.device("cpu")
-	def SetModel(self, model, **kwargs):
-		"""
-		Selecting the model to be used for the network.
-		Keywords are passed to model if they exist in the model.
-		"""
-		model_args = self.GetKwArgs(model, kwargs)
-		self.model = model(**model_args).to(self.device)
-		if self.device.type == "cuda" and torch.cuda.device_count() > 1:
-			self.model = nn.DataParallel(self.model)
-	def SetExpData(self, fname, mask=100, square_root=True):
-		"""
-		Set diffraction data used for prediction.
-		Mask out the noise by selecting a threshold 
-		value below which everything is set to zero.
-		Normalizes the array to [0,1] interval.
-		Square root if data is intensity.
-		"""
-		self.expdata = np.abs(np.load(fname))
-		self.expdata[self.expdata < mask] = 0.0
-		if square_root:
-			self.expdata = np.sqrt(self.expdata)
-		max = 1.0/self.expdata.max()
-		self.expdata = self.expdata * max
-	def SetTrainedNN(self, fname):
-		"""
-		Load the trained neural network.
-		Must be a .pth file.
-		"""
-		self.trained_network = fname
-	def SetOutputFile(self, fname):
-		"""
-		Set output file, i.e. the 
-		reconstructed object.
-		"""
-		self.output = fname
-	def Predict(self):
-		"""
-		Forward propagate the diffraction pattern 
-		through the trained neural network and  
-		obtain an output complex object 
-		"""
-		i = self.expdata.shape[0]
-		j = self.expdata.shape[1]
-		k = self.expdata.shape[2]
-
-		torcharray = np.zeros((1,1,i,j,k), dtype=np.float32)
-		torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
-		torcharray = torch.from_numpy(torcharray)
-		
-		if self.device.type == 'cuda':
-			self.model.load_state_dict(torch.load(self.trained_network))
-			torcharray = torcharray.to(device = self.device, dtype = torch.float)
-		else:
-			self.model.load_state_dict(torch.load(self.trained_network, map_location = 'cpu'))
-
-		self.model.eval()
-			
-		with torch.no_grad():
-			sequence = self.model(torcharray)
-			
-		sequence = sequence.cpu()
-
-		amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
-		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
-
-		amp[:] = sequence[0,0,:,:,:]
-		pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
-		pha[:] -= np.pi
-
-		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
-
-		np.save(self.output, com)
-
-
 class CNNPredict(CNNTrain):
 	"""
 	Prediction from trained neural network.
@@ -812,24 +751,9 @@ class CNNPredict(CNNTrain):
 		reconstructed object.
 		"""
 		self.output = fname
-	def all_loss(self, output, input):
-		X,Y,Z = self.expdata.shape
-		X2 = X//2
-		X4 = X//4
-		Y2 = Y//2
-		Y4 = Y//4
-		Z2 =  Z//2
-		Z4 = Z//4
+	def all_loss(self, output_diff, input):
 
-		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
-		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
-		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
-		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
-		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
-
-		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
-		loss = self.pcc_loss(amp_out, input) 
-		del obj_comp, amp_out
+		loss = self.pcc_loss(output_diff, input) 
 		return loss
 
 	def criterion(self, output, input):
@@ -846,23 +770,14 @@ class CNNPredict(CNNTrain):
 		self.model.eval()
 			
 		with torch.no_grad():
-			sequence = self.model(self.torcharray)
+			_, com, _,_,_ = self.model(self.torcharray)
 			
-		sequence = sequence.cpu()
-
-		i,j,k = self.expdata.shape
-		amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
-		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
-
-		amp[:] = sequence[0,0,:,:,:]
-		pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
-		pha[:] -= np.pi
-
-		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
+		com = com.cpu()
 
 		np.save(self.output, com)
 
 	def TransferPredict(self):
+		scaler = GradScaler(init_scale=1.0, growth_factor=2.0, backoff_factor=0.5, growth_interval=100, enabled=True)
 		for epoch in range(self.hyperpars['epochs']):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
 			self.model.train()
@@ -874,17 +789,21 @@ class CNNPredict(CNNTrain):
 			for idi in range(sw_op):
 				if sw_op_flag == idi:
 					list(self.optimisers.values())[idi].zero_grad()
-			# Forward propagation
-			y_train_predict = self.model.forward(self.torcharray)
-			# Define the loss and then backward propagate
-			loss1 = self.criterion(y_train_predict, self.torcharray)
-			loss1.backward()
+			with torch.cuda.amp.autocast():
+				# Forward propagation
+				y_train_predict, _,_,_,_ = self.model.forward(self.torcharray)
+				# Define the loss and then backward propagate
+				loss1 = self.criterion(y_train_predict, self.torcharray)
+			#loss1.backward()
+			scaler.scale(loss1).backward()
 			#incorporate a clip on the values of the gradients, to avoid exploding gradients 
 			clip_grad_norm_(self.model.parameters(), max_norm = 10.0, norm_type=2)
 			# Optimise the weights and biases
 			for idi in range(sw_op):
 				if sw_op_flag == idi:
-					list(self.optimisers.values())[idi].step()
+					#list(self.optimisers.values())[idi].step()
+					scaler.step(list(self.optimisers.values())[idi])
+			scaler.update()
 			# Sum losses
 			train_loss_tmp += loss1.item()
 			# Update learning rate with scheduler
@@ -892,7 +811,6 @@ class CNNPredict(CNNTrain):
 				if sw_op_flag == idi:
 					list(self.schedulers.values())[idi].step()
 					lr = self.GetLR(list(self.optimisers.values())[idi])
-					
 			# Update graph data
 			self.train_loss.append(train_loss_tmp)
 			# Check for instability
@@ -908,21 +826,14 @@ class CNNPredict(CNNTrain):
 			if epoch % (self.hyperpars['epochs'] -1) == 0:
 				self.model.eval()
 				with torch.no_grad():
-					sequence = self.model.forward(self.torcharray)
+					_,com,_,_,supp = self.model.forward(self.torcharray)
 
-				sequence = sequence.cpu()
+				com = com.cpu()
+				supp = supp.cpu()
 
-				i,j,k = self.expdata.shape
-				amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
-				pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
+				np.save(self.output+'_'+self.datestr+'.npy', com)
+				np.save('support_'+self.datestr+'.npy', supp)
 
-				amp[:] = sequence[0,0,:,:,:]
-				pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
-				pha[:] -= np.pi
-
-				com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
-
-				np.save('iter_'+self.output, com)
 	def SaveTrainLoss(self):
 		lossdata = np.array(self.train_loss)
 		np.save('trainlossdata_'+self.datestr+'.npy', lossdata)
@@ -933,12 +844,12 @@ class CNNPredict(CNNTrain):
 def Train():
 	cnn = CNNTrain()
 	cnn.SetDevice('cuda')
-	cnn.SetInputData('fs_amps_Mono10K.npy')
-	cnn.SetTargetData('rs_objs_Mono10K.npy')
-	cnn.SetModel(NNModel, momentum = 0.9, checkpoints = False)
+	cnn.SetInputData('fs_amps.npy')
+	cnn.SetTargetData('rs_objs.npy')
+	cnn.SetModel(NNModel, checkpoints=False)
 	cnn.SetValidSize(0.1)
 	cnn.SplitData()
-	cnn.SetBatchSize(16)
+	cnn.SetBatchSize(5)
 	cnn.LoadSplitTrain(loadtype='train')
 	cnn.LoadSplitTrain(loadtype='test')
 	#cnn.LoadWeights("CP.pth")
@@ -946,23 +857,17 @@ def Train():
 	#cnn.InitialiseWeights(nn.init.xavier_normal_)
 	cnn.SetLRStepSize(25)
 	cnn.AddLR(1e-4)
-	cnn.AddLR(1e-5)
-	#cnn.AddLR(5e-5)
-	#cnn.AddLR(5e-6)
-	cnn.SetGamma(0.9)
+	cnn.AddLR(1e-6)
+	cnn.SetGamma(0.75)
 	cnn.AddOptimiser(optim.ASGD)
 	cnn.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
-	#cnn.AddOptimiser(optim.ASGD)
-	#cnn.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
 	#cnn.AddOptimiser(optim.SGD, momentum=0.9)
 	#cnn.AddOptimiser(optim.RMSprop, alpha=0.99, eps=1e-08, weight_decay=0, momentum=0.9, centered=False)
 	cnn.AddScheduler(ss.StepLR)
 	cnn.AddScheduler(ss.StepLR)
-	#cnn.AddScheduler(ss.StepLR)
-	#cnn.AddScheduler(ss.StepLR)
-	cnn.SetNEpochs(250)
-	cnn.SetOpStep(100)
-	cnn.TrainNN(rs_pcc=True)
+	cnn.SetNEpochs(50)
+	cnn.SetOpStep(10)
+	cnn.TrainNN(rs_pcc=False)
 	cnn.SaveParameters()
 	cnn.SaveLoss()
 	cnn.PlotLoss()
@@ -971,29 +876,29 @@ def Predict():
 	predict = CNNPredict()
 	predict.SetDevice('cuda')
 	#predict.SetDevice('cpu')
-	predict.SetModel(NNModel, checkpoints = True)
+	predict.SetModel(NNModel, checkpoints=True)
 	predict.SetExpData('expdata.npy', mask=500, square_root=True)
 	predict.SetTrainedNN("CP.pth")
-	predict.SetOutputFile('output.npy')
+	predict.SetOutputFile('output')
 	predict.SetLRStepSize(25)
-	predict.AddLR(1e-4)
+	predict.AddLR(1e-3)
 	predict.AddLR(5e-4)
-	#predict.AddLR(1e-4)
-	#predict.AddLR(5e-5)
+	predict.AddLR(1e-4)
+	predict.AddLR(5e-5)
 	predict.SetGamma(0.9)
 	predict.AddOptimiser(optim.ASGD)
 	predict.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
-	#predict.AddOptimiser(optim.ASGD)
-	#predict.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
+	predict.AddOptimiser(optim.ASGD)
+	predict.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
 	predict.AddScheduler(ss.StepLR)
 	predict.AddScheduler(ss.StepLR)
-	#predict.AddScheduler(ss.StepLR)
-	#predict.AddScheduler(ss.StepLR)
-	predict.SetNEpochs(250)
+	predict.AddScheduler(ss.StepLR)
+	predict.AddScheduler(ss.StepLR)
+	predict.SetNEpochs(100)
 	predict.SetOpStep(10)
 	predict.TransferPredict()
 	predict.SaveTrainLoss()
-	predict.PlotLoss()
+	predict.PlotLoss(training=False)
 
 
 if __name__ == '__main__':

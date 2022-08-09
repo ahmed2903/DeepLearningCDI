@@ -1,4 +1,4 @@
-from cnnphaseAh import *
+from cnnphase06 import *
 
 
 def Train():
