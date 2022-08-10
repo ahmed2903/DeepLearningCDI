@@ -14,7 +14,7 @@
 #		will help determine if the phase jumps are artificial or real 
 #		COMPLETE
 # 2) Incorporating a cyclic LR function opposed to StepLR 
-# 3) A Shrink Wrap function before the Fourier Transform operation  
+# 3) A threshold of 0.1*Maximum --> 0 function before the Fourier Transform operation  
 # 		COMPLETE
 # 4) momentum in the batch normalization update
 # 5) Slope of the Leaky Relu activation function 0.2 --> 0.01
@@ -214,40 +214,31 @@ class NNModel(nn.Module):
 		#activation function is a Sigmoid for the amplitude branch
 		#activation function is a Tanh for the phase branch
 
-		s = nn.Sigmoid()
-		t = nn.Tanh()
+		s = nn.Sigmoid() #output range [0,1]
+		t = nn.Tanh() #output range = [-1,1]
 
 		x1 = s(x1) 
 		x2 = t(x2) 
 
 
 		# Normalizing the output amplitude 
-		max_A = torch.amax(x1, dim=[-1, -2, -3], keepdim=True)
+		max_A = torch.amax(x1, dim=[-3, -2, -1], keepdim=True)
 		x1 = torch.div(x1,max_A+1e-6) #Prevent zero div
 
-		# Define support with a threshold wrt amplitude such that only the phase of the object is incorporated in the loss 
+		# Define threshold such that only the phase of the object is incorporated in the loss 
 		sw_thresh = 0.1
 
 		mask = torch.tensor([0,1],dtype=x1.dtype, device=x1.device)
 		x1 = torch.where(x1<sw_thresh,mask[0],x1)
 
-		support = torch.zeros(x1.shape,device=x1.device)
-		support = torch.where(x1<sw_thresh,mask[0],mask[1])
-
 
 		# clamping the phase channel to -1,1 then shifting on -pi,pi scale 
 		x2 = torch.clamp(x2, min=-1, max=1) #clamping the phase values # Not really needed if tanh function
 		x2 = x2 * np.pi
-
-		# Combining the two branches into one complex object then taking the absolute value of fourier transform 
-		complex_x = torch.complex(x1*torch.cos(x2),x1*torch.sin(x2))
-		y = torch.fft.fftn(complex_x,dim=(-3,-2,-1))
-		y = torch.fft.fftshift(y,dim=(-3,-2,-1)) #FFT shift will move the wrong dimensions if not specified
-		y = torch.abs(y)
 		
 		#x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
-		del max_A
-		return y, complex_x, x1, x2, support
+		del max_A, mask
+		return x1, x2
 
 
 
@@ -510,7 +501,7 @@ class CNNTrain():
 		vy = torch.abs(y - torch.mean(y))
 		loss = torch.mean(vx * vy) / (torch.sqrt(torch.mean(vx ** 2) * torch.mean(vy ** 2))+1e-40)
 		return 1.0 - loss
-	def all_loss(self, output_amp, output_pha, output_diff, target, input, support, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def all_loss(self, output_amp, output_pha, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
 		"""
 		Total loss in the training. 
 		loss1: amplitude channel.
@@ -518,8 +509,6 @@ class CNNTrain():
 		loss3: fourier transform of the object.
 		
 		All losses are merged together in a single loss function.
-
-		Monitoring the phase loss only within the support, the output_pha is multiplied by the support
 		"""
 		_, __, X,Y,Z = self.data['input_data'].shape
 		X2 = X//2
@@ -531,25 +520,32 @@ class CNNTrain():
 		
 		if rs_pcc:
 			loss1 = self.pcc_loss(output_amp, target[:, 0, :, :, :])
-			loss2 = self.pcc_loss(output_pha*support, target[:, 1, :, :, :])
+			loss2 = self.pcc_loss(output_pha, target[:, 1, :, :, :])
 		else:
 			loss1 = self.chi_loss(output_amp, target[:, 0, :, :, :])
-			loss2 = self.chi_loss(output_pha*support, target[:, 1, :, :, :])
+			loss2 = self.chi_loss(output_pha, target[:, 1, :, :, :])
+
+		# Combining the two branches into one complex object then taking the absolute value of fourier transform 
+		obj_comp = torch.complex(output_amp*torch.cos(output_pha),output_amp*torch.sin(output_pha))
 
 		# padding the output diffraction pattern by X2 on each side to match the shape of the input 
-		pad = nn.ConstantPad3d(int(X4), 0)
-		output_diff = pad(output_diff)
+		pad_dim = (Z4,Z4,Y4,Y4,X4,X4)
+		obj_comp = F.pad(obj_comp, pad_dim,"constant", 0)
 
-		loss3 = self.pcc_loss(output_diff, input)
+		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
+
+		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+
+		loss3 = self.pcc_loss(amp_out, input)
 		
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
 		return loss
 		
-	def criterion(self, output_amp, output_pha, output_diff, target, input, support, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def criterion(self, output_amp, output_pha, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
 		"""
 		Call the desired loss function.
 		"""
-		return self.all_loss(output_amp = output_amp, output_pha = output_pha, output_diff= output_diff, target=target, input= input, support = support, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
+		return self.all_loss(output_amp = output_amp, output_pha = output_pha, target=target, input= input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
 
 	def GetLR(self, optimiser):
 		"""
@@ -603,9 +599,9 @@ class CNNTrain():
 					if sw_op_flag == idi:
 						list(self.optimisers.values())[idi].zero_grad()
 				# Forward propagation
-				y_diff_predict, _,y_amp_predict, y_pha_predict, supp = self.model.forward(x_train)
+				y_amp_predict, y_pha_predict= self.model.forward(x_train)
 				# Define the loss and then backward propagate
-				loss1 = self.criterion(y_amp_predict, y_pha_predict, y_diff_predict, y_train, z_train, supp, **loss_args)
+				loss1 = self.criterion(y_amp_predict, y_pha_predict, y_train, z_train, **loss_args)
 				loss1.backward()
 				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
 				clip_grad_norm_(self.model.parameters(), max_norm = 10.0, norm_type=2)
@@ -632,8 +628,8 @@ class CNNTrain():
 				for loader_batch_test in self.loader['test']:
 					x_test, y_test, z_test = loader_batch_test
 					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
-					y_pred, _,amp_predict, pha_predict,supp = self.model.forward(x_test)
-					loss2 = self.criterion(amp_predict, pha_predict, y_pred, y_test, z_test, supp, **loss_args)
+					amp_predict, pha_predict = self.model.forward(x_test)
+					loss2 = self.criterion(amp_predict, pha_predict, y_test, z_test, **loss_args)
 					valid_loss_tmp += loss2.item()
 			# Update graph data
 			self.train_loss.append(train_loss_tmp / len(self.loader['train']))
@@ -770,9 +766,12 @@ class CNNPredict(CNNTrain):
 		self.model.eval()
 			
 		with torch.no_grad():
-			_, com, _,_,_ = self.model(self.torcharray)
+			output_amp, output_pha = self.model(self.torcharray)
 			
+		com = torch.complex(output_amp*torch.cos(output_pha),output_amp*torch.sin(output_pha))
 		com = com.cpu()
+
+		com = np.array(com).squeeze()
 
 		np.save(self.output, com)
 
@@ -826,13 +825,14 @@ class CNNPredict(CNNTrain):
 			if epoch % (self.hyperpars['epochs'] -1) == 0:
 				self.model.eval()
 				with torch.no_grad():
-					_,com,_,_,supp = self.model.forward(self.torcharray)
+					output_amp, output_pha = self.model.forward(self.torcharray)
 
+				com = torch.complex(output_amp*torch.cos(output_pha),output_amp*torch.sin(output_pha))
 				com = com.cpu()
-				supp = supp.cpu()
+
+				com = np.array(com).squeeze()
 
 				np.save(self.output+'_'+self.datestr+'.npy', com)
-				np.save('support_'+self.datestr+'.npy', supp)
 
 	def SaveTrainLoss(self):
 		lossdata = np.array(self.train_loss)
