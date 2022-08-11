@@ -13,15 +13,12 @@
 #		the phase generation range will need to be [-1,1] to satisfy the tanh activation function
 #		will help determine if the phase jumps are artificial or real 
 #		COMPLETE
-# 2) Incorporating a cyclic LR function opposed to StepLR 
-# 3) A threshold of 0.1*Maximum --> 0 function before the Fourier Transform operation  
+#		Gendata was updated to include phase on a [-1,1] range
+#		Fourier transfoms now are pi*phase opposed to 2*pi*pha to account for the range change
+# 2) A threshold of 0.1*Maximum --> 0 function before the Fourier Transform operation for the amp and the pha of the object
 # 		COMPLETE
-# 4) momentum in the batch normalization update
-# 5) Slope of the Leaky Relu activation function 0.2 --> 0.01
-# 6) Upsample mode : nearest --> trilinear
+# 3) Upsample mode : nearest --> trilinear
 #		will help with sudden jumps in the amplitude and phase 
-# 		COMPLETE
-# 7) Normalizing the amplitude instead of clipping it to a range 
 # 		COMPLETE
 # 
 # # ###########################################
@@ -220,25 +217,20 @@ class NNModel(nn.Module):
 		x1 = s(x1) 
 		x2 = t(x2) 
 
-
-		# Normalizing the output amplitude 
-		max_A = torch.amax(x1, dim=[-3, -2, -1], keepdim=True)
-		x1 = torch.div(x1,max_A+1e-6) #Prevent zero div
-
 		# Define threshold such that only the phase of the object is incorporated in the loss 
-		sw_thresh = 0.1
+		sw_thresh = 0.05
 
 		mask = torch.tensor([0,1],dtype=x1.dtype, device=x1.device)
-		x1 = torch.where(x1<sw_thresh,mask[0],x1)
-
+		x1 = torch.where(x1<sw_thresh,mask[0],x1) #thresold value for the object below which everything is zero
+	
 
 		# clamping the phase channel to -1,1 then shifting on -pi,pi scale 
 		x2 = torch.clamp(x2, min=-1, max=1) #clamping the phase values # Not really needed if tanh function
-		x2 = x2 * np.pi
+		x2 = torch.where(x1<sw_thresh, mask[0],x2) #only considering the phase in the region where the objec exists
 		
-		#x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
-		del max_A, mask
-		return x1, x2
+		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
+
+		return x0
 
 
 
@@ -501,7 +493,7 @@ class CNNTrain():
 		vy = torch.abs(y - torch.mean(y))
 		loss = torch.mean(vx * vy) / (torch.sqrt(torch.mean(vx ** 2) * torch.mean(vy ** 2))+1e-40)
 		return 1.0 - loss
-	def all_loss(self, output_amp, output_pha, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def all_loss(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
 		"""
 		Total loss in the training. 
 		loss1: amplitude channel.
@@ -510,7 +502,7 @@ class CNNTrain():
 		
 		All losses are merged together in a single loss function.
 		"""
-		_, __, X,Y,Z = self.data['input_data'].shape
+		_, _, X,Y,Z = self.data['input_data'].shape
 		X2 = X//2
 		X4 = X//4
 		Y2 = Y//2
@@ -519,33 +511,44 @@ class CNNTrain():
 		Z4 = Z//4
 		
 		if rs_pcc:
-			loss1 = self.pcc_loss(output_amp, target[:, 0, :, :, :])
-			loss2 = self.pcc_loss(output_pha, target[:, 1, :, :, :])
+			loss1 = self.pcc_loss(output[:, 0, :, :, :], target[:, 0, :, :, :])
+			loss2 = self.pcc_loss(output[:, 1, :, :, :], target[:, 1, :, :, :])
 		else:
-			loss1 = self.chi_loss(output_amp, target[:, 0, :, :, :])
-			loss2 = self.chi_loss(output_pha, target[:, 1, :, :, :])
+			loss1 = self.chi_loss(output[:, 0, :, :, :], target[:, 0, :, :, :])
+			loss2 = self.chi_loss(output[:, 1, :, :, :], target[:, 1, :, :, :])
 
 		# Combining the two branches into one complex object then taking the absolute value of fourier transform 
-		obj_comp = torch.complex(output_amp*torch.cos(output_pha),output_amp*torch.sin(output_pha))
 
-		# padding the output diffraction pattern by X2 on each side to match the shape of the input 
-		pad_dim = (Z4,Z4,Y4,Y4,X4,X4)
-		obj_comp = F.pad(obj_comp, pad_dim,"constant", 0)
-
+		#obj_comp = torch.complex(output_amp*torch.cos(output_pha*torch.pi),output_amp*torch.sin(output_pha*torch.pi))
+		
+		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
+		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(torch.pi * (output[:,1,:,:,:]))
+		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(torch.pi * (output[:,1,:,:,:]))
+		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
 		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+		loss3 = self.pcc_loss(amp_out, input) 
+		
 
-		loss3 = self.pcc_loss(amp_out, input)
+		# padding the output diffraction pattern by Z4 for index -1 Y4 for index -2 and X4 for index -3 on each side to match the shape of the input 
+		# pad_dim = (Z4,Z4,Y4,Y4,X4,X4)
+		# obj_comp = F.pad(obj_comp, pad_dim,"constant", 0)
+
+		# amp_out = torch.fft.fftshift(torch.fft.fftn(torch.fft.ifftshift(obj_comp, dim=(-3,-2,-1)), dim= (-3,-2,-1)),dim=(-3,-2,-1))
+		# amp_out = torch.abs(amp_out)
 		
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
+		
+		del obj_comp
+		del amp_out
 		return loss
 		
-	def criterion(self, output_amp, output_pha, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def criterion(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
 		"""
 		Call the desired loss function.
 		"""
-		return self.all_loss(output_amp = output_amp, output_pha = output_pha, target=target, input= input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
+		return self.all_loss(output=output, target=target, input= input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
 
 	def GetLR(self, optimiser):
 		"""
@@ -599,9 +602,9 @@ class CNNTrain():
 					if sw_op_flag == idi:
 						list(self.optimisers.values())[idi].zero_grad()
 				# Forward propagation
-				y_amp_predict, y_pha_predict= self.model.forward(x_train)
+				y_train_predict = self.model.forward(x_train)
 				# Define the loss and then backward propagate
-				loss1 = self.criterion(y_amp_predict, y_pha_predict, y_train, z_train, **loss_args)
+				loss1 = self.criterion(y_train_predict, y_train, z_train, **loss_args)
 				loss1.backward()
 				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
 				clip_grad_norm_(self.model.parameters(), max_norm = 10.0, norm_type=2)
@@ -628,8 +631,8 @@ class CNNTrain():
 				for loader_batch_test in self.loader['test']:
 					x_test, y_test, z_test = loader_batch_test
 					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
-					amp_predict, pha_predict = self.model.forward(x_test)
-					loss2 = self.criterion(amp_predict, pha_predict, y_test, z_test, **loss_args)
+					y_test_predict = self.model.forward(x_test)
+					loss2 = self.criterion(y_test_predict, y_test, z_test, **loss_args)
 					valid_loss_tmp += loss2.item()
 			# Update graph data
 			self.train_loss.append(train_loss_tmp / len(self.loader['train']))
@@ -747,9 +750,40 @@ class CNNPredict(CNNTrain):
 		reconstructed object.
 		"""
 		self.output = fname
-	def all_loss(self, output_diff, input):
+	def all_loss(self,output, input):
+		X,Y,Z = self.expdata.shape
+		X2 = X//2
+		X4 = X//4
+		Y2 = Y//2
+		Y4 = Y//4
+		Z2 =  Z//2
+		Z4 = Z//4
 
-		loss = self.pcc_loss(output_diff, input) 
+		# # Combining the two branches into one complex object then taking the absolute value of fourier transform 
+		# obj_comp = torch.complex(output_amp*torch.cos(output_pha*np.pi),output_amp*torch.sin(output_pha*np.pi))
+
+		# # padding the output diffraction pattern by Z4 for index -1 Y4 for index -2 and X4 for index -3 on each side to match the shape of the input 
+		# pad_dim = (Z4,Z4,Y4,Y4,X4,X4)
+		# obj_comp = F.pad(obj_comp, pad_dim,"constant", 0)
+		
+		# #obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
+		# #amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+
+		# amp_out = torch.fft.ifftshift(torch.fft.fftn(torch.fft.fftshift(obj_comp, dim=(-3,-2,-1)), dim= (-3,-2,-1)),dim=(-3,-2,-1))
+		# amp_out = torch.abs(amp_out)
+		
+
+		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
+		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(torch.pi * (output[:,1,:,:,:]))
+		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(torch.pi * (output[:,1,:,:,:]))
+		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
+		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
+
+		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+		loss = self.pcc_loss(amp_out, input) 
+
+		del obj_comp
+		del amp_out
 		return loss
 
 	def criterion(self, output, input):
@@ -766,12 +800,19 @@ class CNNPredict(CNNTrain):
 		self.model.eval()
 			
 		with torch.no_grad():
-			output_amp, output_pha = self.model(self.torcharray)
+			sequence = self.model(self.torcharray)
 			
-		com = torch.complex(output_amp*torch.cos(output_pha),output_amp*torch.sin(output_pha))
-		com = com.cpu()
+		sequence = sequence.cpu()
 
-		com = np.array(com).squeeze()
+		i,j,k = self.expdata.shape
+		amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
+		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
+
+		amp[:] = sequence[0,0,:,:,:]
+		pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
+		pha[:] -= np.pi
+
+		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 
 		np.save(self.output, com)
 
@@ -790,9 +831,9 @@ class CNNPredict(CNNTrain):
 					list(self.optimisers.values())[idi].zero_grad()
 			with torch.cuda.amp.autocast():
 				# Forward propagation
-				y_train_predict, _,_,_,_ = self.model.forward(self.torcharray)
+				y_train_pred = self.model.forward(self.torcharray)
 				# Define the loss and then backward propagate
-				loss1 = self.criterion(y_train_predict, self.torcharray)
+				loss1 = self.criterion(y_train_pred, self.torcharray)
 			#loss1.backward()
 			scaler.scale(loss1).backward()
 			#incorporate a clip on the values of the gradients, to avoid exploding gradients 
@@ -825,15 +866,22 @@ class CNNPredict(CNNTrain):
 			if epoch % (self.hyperpars['epochs'] -1) == 0:
 				self.model.eval()
 				with torch.no_grad():
-					output_amp, output_pha = self.model.forward(self.torcharray)
+					sequence = self.model.forward(self.torcharray)
 
-				com = torch.complex(output_amp*torch.cos(output_pha),output_amp*torch.sin(output_pha))
-				com = com.cpu()
+				sequence = sequence.cpu()
 
-				com = np.array(com).squeeze()
+				i,j,k = self.expdata.shape
+				amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
+				pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
 
-				np.save(self.output+'_'+self.datestr+'.npy', com)
+				amp[:] = sequence[0,0,:,:,:]
+				pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
+				pha[:] -= np.pi
 
+				com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
+
+				np.save(self.output+self.datestr+'.npy', com)
+		
 	def SaveTrainLoss(self):
 		lossdata = np.array(self.train_loss)
 		np.save('trainlossdata_'+self.datestr+'.npy', lossdata)
