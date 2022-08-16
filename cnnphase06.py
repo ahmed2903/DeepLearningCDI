@@ -750,7 +750,7 @@ class CNNPredict(CNNTrain):
 		reconstructed object.
 		"""
 		self.output = fname
-	def all_loss(self,output, input):
+	def all_loss(self, output, input):
 		X,Y,Z = self.expdata.shape
 		X2 = X//2
 		X4 = X//4
@@ -809,8 +809,7 @@ class CNNPredict(CNNTrain):
 		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
 
 		amp[:] = sequence[0,0,:,:,:]
-		pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
-		pha[:] -= np.pi
+		pha[:] = sequence[0,1,:,:,:] * np.pi
 
 		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 

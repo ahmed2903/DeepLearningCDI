@@ -10,11 +10,14 @@
 #
 # Version update: 
 # 1) Adding statistical noise to the training samples
-#		may do it here or in gendata
-# 2) Incorporate noise resistant neural network by introducing cross correlation function 
+#		update to function SetInputData
+# 2) Including multiple version of the same diffraction patterns - versions will include rotations or inversions or a mix of both
+#		added a new function GenMoreData
+#  
+# 3) Incorporate noise resistant neural network by introducing cross correlation function 
 #		based on idea from "Deep neural networks for classifying complex features in diffraction images"
-#
-#
+#		network will be trained with the cross correlation function of the input 
+#		NEED TO FIND A WAY TO DO THIS
 #
 #
 #
@@ -22,6 +25,8 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+#import statsmodels.api as sm
+import scipy
 plt.switch_backend('agg')
 
 from time import strftime
@@ -214,25 +219,20 @@ class NNModel(nn.Module):
 		x1 = s(x1) 
 		x2 = t(x2) 
 
-
-		# Normalizing the output amplitude 
-		max_A = torch.amax(x1, dim=[-3, -2, -1], keepdim=True)
-		x1 = torch.div(x1,max_A+1e-6) #Prevent zero div
-
 		# Define threshold such that only the phase of the object is incorporated in the loss 
-		sw_thresh = 0.1
+		sw_thresh = 0.05
 
 		mask = torch.tensor([0,1],dtype=x1.dtype, device=x1.device)
-		x1 = torch.where(x1<sw_thresh,mask[0],x1)
+		x1 = torch.where(x1<sw_thresh,mask[0],x1) #thresold value for the object below which everything is zero
 
 
 		# clamping the phase channel to -1,1 then shifting on -pi,pi scale 
 		x2 = torch.clamp(x2, min=-1, max=1) #clamping the phase values # Not really needed if tanh function
-		x2 = x2 * np.pi
+		x2 = torch.where(x1<sw_thresh, mask[0],x2) #only considering the phase in the region where the objec exists
 		
-		#x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
-		del max_A, mask
-		return x1, x2
+		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together
+
+		return x0
 
 
 
@@ -275,7 +275,7 @@ class CNNTrain():
 			self.device = torch.device("cuda")
 		else:
 			self.device = torch.device("cpu")
-	def SetInputData(self, fname):
+	def SetInputData(self, fname, add_noise = True):
 		"""
 		Load Fourier-space amplitude diffraction data 
 		from training. Shape is: (n,1,x,y,z).
@@ -284,9 +284,31 @@ class CNNTrain():
 		"""
 		self.data['input_data'] = np.load(fname)
 		shp = self.data['input_data'].shape
+
+		### Adding noise to diffraction data ###
+		if add_noise:
+			for i in range(0,shp[0]):
+				mean = np.mean(self.data['input_data'][i,0,:,:,:])
+				std_dev = np.std(self.data['input_data'][i,0,:,:,:])
+
+				self.data['input_data'][i,0,:,:,:] = self.data['input_data'][i,0,:,:,:] + np.random.normal(mean/2,std_dev/2,(shp[-3],shp[-2],shp[-1]))
+
+		# if CF: #Find a way to do this in 3D!
+		# 	for i in range(0,shp[0]):
+		# 		self.data['input_data'][i,0,:,:,:] =sm.tsa.acf(self.data['input_data'][i,0,:,:,:]) #only works for 1D arrays! 
+
+			# could use the bonsu functions? 
+			# from bonsu.lib.prfftw import convolve
+			# from bonsu.lib.prfftw import wrap
+			# wrap(array, 1)
+			# convolve(array, array)
+			# wrap(array, -1)
+			# Returns segmentation fault 
+
 		self.data['target_data1'] = np.zeros((shp[0], shp[-3], shp[-2], shp[-1]), dtype='float32')
 		self.data['target_data1'][:] = self.data['input_data'][:,0,:,:,:]
 		self.WrapAroundData(self.data['target_data1'])
+
 	def WrapAroundData(self, data):
 		def CalcThread(idxrange):
 			for i in range(idxrange[0], idxrange[1], 1):
@@ -312,6 +334,74 @@ class CNNTrain():
 		[:,0,:,:,:] is amplitude, [:,1,:,:,:] is phase.
 		"""
 		self.data['target_data0'] = np.load(fname)
+
+	def GenMoreData(self, n=2):
+		"""
+		A function for the generation of more diffraction data from the already loaded data
+		The purpose is to randomly rotate or invert the diffraction data and its corresponding complex object
+		This improves the stability of the network and works well against network overfitting
+		"""
+		shp = self.data['target_data0'].shape
+		shp2 = self.data['input_data'].shape
+		# #
+		X2 = shp2[-3]//2
+		X4 = shp2[-3]//4
+		Y2 = shp2[-2]//2
+		Y4 = shp2[-2]//4
+		Z2 = shp2[-1]//2
+		Z4 = shp2[-1]//4
+		
+		
+		for k in range(0,n-1):
+
+			for i in range(0,shp[0]):
+
+				j = i+shp[0]
+				phi = np.random.randint(0,180)
+				chi = np.random.randint(0,180)
+				eta = np.random.randint(0,180)
+
+				flip_axis = np.random.randint(0,2)
+
+				new_array = np.zeros((1,2,shp[-3],shp[-2],shp[-1]))
+
+				### rotating the amp array and the diffraction array by a random angle between [0,180] about each axis
+
+				new_array[0,0,:,:,:] = scipy.ndimage.rotate(self.data['target_data0'][i,0,:,:,:], angle = phi, axes = (1,2), reshape=False )
+				new_array[0,0,:,:,:] = scipy.ndimage.rotate(new_array[0,0,:,:,:], angle = chi, axes = (0,1), reshape=False )
+				new_array[0,0,:,:,:] = scipy.ndimage.rotate(new_array[0,0,:,:,:], angle = eta, axes = (2,0), reshape=False )
+
+				new_array[0,1,:,:,:] = scipy.ndimage.rotate(self.data['target_data0'][i,1,:,:,:], angle = phi, axes = (1,2), reshape=False )
+				new_array[0,1,:,:,:] = scipy.ndimage.rotate(new_array[0,1,:,:,:], angle = chi, axes = (0,1), reshape=False )
+				new_array[0,1,:,:,:] = scipy.ndimage.rotate(new_array[0,1,:,:,:], angle = eta, axes = (2,0), reshape=False )
+
+
+
+				### flipping the elements of the array along one random axis
+				new_array[0,0,:,:,:] = np.flip(new_array[0,0,:,:,:], flip_axis)
+				new_array[0,1,:,:,:] = np.flip(new_array[0,1,:,:,:], flip_axis)
+
+				self.data['target_data0'] = np.append(self.data['target_data0'], new_array, axis = 0)
+
+				rs_complex = np.zeros((shp[-3] * 2, shp[-2] * 2, shp[-1] * 2), dtype=np.csingle)
+				rs_complex[X2-X4:X2+X4,Y2-Y4:Y2+Y4,Z2-Z4:Z2+Z4] =  self.data['target_data0'][j,0,:,:,:] * np.cos(np.pi * self.data['target_data0'][j,1,:,:,:]) + 1j*self.data['target_data0'][j,0,:,:,:] * np.sin(np.pi * self.data['target_data0'][j,1,:,:,:])
+
+
+				intermediate_diff = np.zeros((1,1,shp[-3]*2,shp[-2]*2,shp[-1]*2))
+				intermediate_diff[0,0,:,:,:] = np.abs(np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(rs_complex))))
+				self.data['input_data'] = np.append(self.data['input_data'], intermediate_diff, axis=0)
+
+				del new_array, rs_complex, intermediate_diff 	
+		
+		self.data['target_data1'] = np.zeros((shp[0]*n, shp2[-3], shp2[-2], shp2[-1]), dtype='float32')
+		self.data['target_data1'][:] = self.data['input_data'][:,0,:,:,:]
+		self.WrapAroundData(self.data['target_data1'])
+
+		print(self.data['target_data1'].shape)
+		print(self.data['target_data0'].shape)
+		print(self.data['input_data'].shape)
+
+
 	def SetModel(self, model, **kwargs):
 		"""
 		Selecting the model to be used for the network.
@@ -495,7 +585,7 @@ class CNNTrain():
 		vy = torch.abs(y - torch.mean(y))
 		loss = torch.mean(vx * vy) / (torch.sqrt(torch.mean(vx ** 2) * torch.mean(vy ** 2))+1e-40)
 		return 1.0 - loss
-	def all_loss(self, output_amp, output_pha, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def all_loss(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
 		"""
 		Total loss in the training. 
 		loss1: amplitude channel.
@@ -504,7 +594,7 @@ class CNNTrain():
 		
 		All losses are merged together in a single loss function.
 		"""
-		_, __, X,Y,Z = self.data['input_data'].shape
+		_, _, X,Y,Z = self.data['input_data'].shape
 		X2 = X//2
 		X4 = X//4
 		Y2 = Y//2
@@ -513,33 +603,44 @@ class CNNTrain():
 		Z4 = Z//4
 		
 		if rs_pcc:
-			loss1 = self.pcc_loss(output_amp, target[:, 0, :, :, :])
-			loss2 = self.pcc_loss(output_pha, target[:, 1, :, :, :])
+			loss1 = self.pcc_loss(output[:, 0, :, :, :], target[:, 0, :, :, :])
+			loss2 = self.pcc_loss(output[:, 1, :, :, :], target[:, 1, :, :, :])
 		else:
-			loss1 = self.chi_loss(output_amp, target[:, 0, :, :, :])
-			loss2 = self.chi_loss(output_pha, target[:, 1, :, :, :])
+			loss1 = self.chi_loss(output[:, 0, :, :, :], target[:, 0, :, :, :])
+			loss2 = self.chi_loss(output[:, 1, :, :, :], target[:, 1, :, :, :])
 
 		# Combining the two branches into one complex object then taking the absolute value of fourier transform 
-		obj_comp = torch.complex(output_amp*torch.cos(output_pha),output_amp*torch.sin(output_pha))
 
-		# padding the output diffraction pattern by X2 on each side to match the shape of the input 
-		pad_dim = (Z4,Z4,Y4,Y4,X4,X4)
-		obj_comp = F.pad(obj_comp, pad_dim,"constant", 0)
-
+		#obj_comp = torch.complex(output_amp*torch.cos(output_pha*torch.pi),output_amp*torch.sin(output_pha*torch.pi))
+		
+		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
+		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(torch.pi * (output[:,1,:,:,:]))
+		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(torch.pi * (output[:,1,:,:,:]))
+		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
 		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+		loss3 = self.pcc_loss(amp_out, input) 
+		
 
-		loss3 = self.pcc_loss(amp_out, input)
+		# padding the output diffraction pattern by Z4 for index -1 Y4 for index -2 and X4 for index -3 on each side to match the shape of the input 
+		# pad_dim = (Z4,Z4,Y4,Y4,X4,X4)
+		# obj_comp = F.pad(obj_comp, pad_dim,"constant", 0)
+
+		# amp_out = torch.fft.fftshift(torch.fft.fftn(torch.fft.ifftshift(obj_comp, dim=(-3,-2,-1)), dim= (-3,-2,-1)),dim=(-3,-2,-1))
+		# amp_out = torch.abs(amp_out)
 		
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
+		
+		del obj_comp
+		del amp_out
 		return loss
 		
-	def criterion(self, output_amp, output_pha, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def criterion(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
 		"""
 		Call the desired loss function.
 		"""
-		return self.all_loss(output_amp = output_amp, output_pha = output_pha, target=target, input= input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
+		return self.all_loss(output=output, target=target, input= input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
 
 	def GetLR(self, optimiser):
 		"""
@@ -593,9 +694,9 @@ class CNNTrain():
 					if sw_op_flag == idi:
 						list(self.optimisers.values())[idi].zero_grad()
 				# Forward propagation
-				y_amp_predict, y_pha_predict= self.model.forward(x_train)
+				y_train_predict = self.model.forward(x_train)
 				# Define the loss and then backward propagate
-				loss1 = self.criterion(y_amp_predict, y_pha_predict, y_train, z_train, **loss_args)
+				loss1 = self.criterion(y_train_predict, y_train, z_train, **loss_args)
 				loss1.backward()
 				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
 				clip_grad_norm_(self.model.parameters(), max_norm = 10.0, norm_type=2)
@@ -622,8 +723,8 @@ class CNNTrain():
 				for loader_batch_test in self.loader['test']:
 					x_test, y_test, z_test = loader_batch_test
 					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
-					amp_predict, pha_predict = self.model.forward(x_test)
-					loss2 = self.criterion(amp_predict, pha_predict, y_test, z_test, **loss_args)
+					y_test_predict = self.model.forward(x_test)
+					loss2 = self.criterion(y_test_predict, y_test, z_test, **loss_args)
 					valid_loss_tmp += loss2.item()
 			# Update graph data
 			self.train_loss.append(train_loss_tmp / len(self.loader['train']))
@@ -741,11 +842,26 @@ class CNNPredict(CNNTrain):
 		reconstructed object.
 		"""
 		self.output = fname
-	def all_loss(self, output_diff, input):
+	def all_loss(self, output, input):
+		X,Y,Z = self.expdata.shape
+		X2 = X//2
+		X4 = X//4
+		Y2 = Y//2
+		Y4 = Y//4
+		Z2 =  Z//2
+		Z4 = Z//4
 
-		loss = self.pcc_loss(output_diff, input) 
+		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
+		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(torch.pi * (output[:,1,:,:,:]))
+		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(torch.pi * (output[:,1,:,:,:]))
+		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
+		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
+
+		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+		loss = self.pcc_loss(amp_out, input) 
+		del obj_comp
+		del amp_out
 		return loss
-
 	def criterion(self, output, input):
 		"""
 		Call the desired loss function.
@@ -760,12 +876,19 @@ class CNNPredict(CNNTrain):
 		self.model.eval()
 			
 		with torch.no_grad():
-			output_amp, output_pha = self.model(self.torcharray)
+			sequence = self.model(self.torcharray)
+		
+		sequence = sequence.cpu()
 			
-		com = torch.complex(output_amp*torch.cos(output_pha),output_amp*torch.sin(output_pha))
-		com = com.cpu()
+		i,j,k = self.expdata.shape
+		amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
+		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
 
-		com = np.array(com).squeeze()
+		amp[:] = sequence[0,0,:,:,:]
+		pha[:] = sequence[0,1,:,:,:] * np.pi
+
+
+		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 
 		np.save(self.output, com)
 
@@ -784,7 +907,7 @@ class CNNPredict(CNNTrain):
 					list(self.optimisers.values())[idi].zero_grad()
 			with torch.cuda.amp.autocast():
 				# Forward propagation
-				y_train_predict, _,_,_,_ = self.model.forward(self.torcharray)
+				y_train_predict = self.model.forward(self.torcharray)
 				# Define the loss and then backward propagate
 				loss1 = self.criterion(y_train_predict, self.torcharray)
 			#loss1.backward()
@@ -819,15 +942,21 @@ class CNNPredict(CNNTrain):
 			if epoch % (self.hyperpars['epochs'] -1) == 0:
 				self.model.eval()
 				with torch.no_grad():
-					output_amp, output_pha = self.model.forward(self.torcharray)
+					sequence = self.model.forward(self.torcharray)
 
-				com = torch.complex(output_amp*torch.cos(output_pha),output_amp*torch.sin(output_pha))
-				com = com.cpu()
+				sequence = sequence.cpu()
 
-				com = np.array(com).squeeze()
+				i,j,k = self.expdata.shape
+				amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
+				pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
 
-				np.save(self.output+'_'+self.datestr+'.npy', com)
+				amp[:] = sequence[0,0,:,:,:]
+				pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
+				pha[:] -= np.pi
 
+				com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
+
+				np.save(self.output+self.datestr+'.npy', com)
 	def SaveTrainLoss(self):
 		lossdata = np.array(self.train_loss)
 		np.save('trainlossdata_'+self.datestr+'.npy', lossdata)
@@ -838,8 +967,9 @@ class CNNPredict(CNNTrain):
 def Train():
 	cnn = CNNTrain()
 	cnn.SetDevice('cuda')
-	cnn.SetInputData('fs_amps.npy')
+	cnn.SetInputData('fs_amps.npy', add_noise=True) # noise is a normal random distribution with its mean at mu/2
 	cnn.SetTargetData('rs_objs.npy')
+	cnn.GenMoreData(n = 2) # the number of data points is muliplied by n and undergo random rotations
 	cnn.SetModel(NNModel, checkpoints=False)
 	cnn.SetValidSize(0.1)
 	cnn.SplitData()

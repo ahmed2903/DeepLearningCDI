@@ -208,7 +208,7 @@ class GenData():
 				fs_amp[i,0,:,:,:] = np.abs(np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(rs_complex))))
 				fs_amp[i,0,:,:,:] /= np.max(fs_amp[i,0,:,:,:])
 				fs_amp[i,0,:,:,:][fs_amp[i,0,:,:,:] < self.fsmask] = 0.0
-		# #
+		# # 
 		xs = []
 		blk = self.n//self.nthreads
 		for i in range(self.nthreads):
@@ -239,5 +239,5 @@ if __name__ == '__main__':
 	d.SetMorphology("hexprism")
 	#d.SetMorphology("octahedron")
 	#d.SetMorphology("monoclinic")
-	d.GenShapeData()
+	d.GenShapeData(add_noise=True)
 	d.SaveData()
