@@ -214,7 +214,7 @@ class GenData():
 		self.rs_obj = rs_amp_phase
 		self.fs_amp = fs_amp
 	# #
-	def SaveData(self, fsname="fs_amps_YMO_CP02.npy", rsname="rs_objs_YMO_CP02.npy"):
+	def SaveData(self, fsname="fs_amps.npy", rsname="rs_objs.npy"):
 		if self.rs_obj is not None:
 			np.save(rsname, self.rs_obj)
 		if self.fs_amp is not None:
@@ -229,3 +229,4 @@ if __name__ == '__main__':
 	#d.SetMorphology("monoclinic")
 	d.GenShapeData()
 	d.SaveData()
+	

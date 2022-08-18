@@ -5,7 +5,7 @@
 # 
 # Authors: Marcus Newton, Ahmed Mohamed.
 # 
-# Version 0.7
+# Version 0.9
 # Licence: GNU GPL 3
 #
 # ###########################################
@@ -105,6 +105,7 @@ class down(nn.Module):
 class up01(nn.Module):
 	'''
 	One branch for the decoder part
+
 	Amplitude recosntruction
 	Upsampling operation followed by the convolutional layer
 	'''
@@ -209,7 +210,7 @@ class NNModel(nn.Module):
 
 		x1 = torch.relu(x1) #activation function in the final layer is a relu opposed to a leakReLU
 		x2 = torch.relu(x2) #activation function in the final layer is a relu opposed to a leakReLU
-		x2 = torch.clamp(x2, min=0.0, max=1.0) #clamping the phase values to be between -pi and pi 
+		#x2 = torch.clamp(x2, min=0.0, max=1.0) #clamping the phase values to be between 0 and 1
 		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
 
 		return x0
@@ -533,13 +534,13 @@ class CNNTrain():
 		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
-		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+		amp_out = torch.abs(obj_comp[:,:,:,:])
 		loss3 = self.pcc_loss(amp_out, input) 
 		
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
 		return loss
 		
-	def criterion(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def criterion(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=True):
 		"""
 		Call the desired loss function.
 		"""
@@ -870,8 +871,9 @@ class CNNPredict(CNNTrain):
 		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
-		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+		amp_out = torch.abs(obj_comp[:,:,:,:])
 		loss = self.pcc_loss(amp_out, input) 
+
 		del obj_comp
 		del amp_out
 		return loss
@@ -997,7 +999,7 @@ def Train():
 	cnn.SetDevice('cuda')
 	cnn.SetInputData('fs_amps.npy')
 	cnn.SetTargetData('rs_objs.npy')
-	cnn.SetModel(NNModel, checkpoints=True)
+	cnn.SetModel(NNModel, checkpoints=False)
 	cnn.SetValidSize(0.1)
 	cnn.SplitData()
 	cnn.SetBatchSize(5)

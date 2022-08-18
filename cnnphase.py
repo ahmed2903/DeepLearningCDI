@@ -3,25 +3,15 @@
 # Convolution Neural Network for Phase Retrieval.
 # Derived from work by Longlong Wu.
 # 
-# Authors: Ahmed Hussein Mokhtar, Marcus Newton
+# Authors: Marcus Newton, Ahmed Mohamed.
 # 
-# Version 0.8
+# Version 0.7
 # Licence: GNU GPL 3
 #
-# Version update: 
-# 1) Adding statistical noise to the training samples
-#		update to function SetInputData
-# 2) Including multiple version of the same diffraction patterns - versions will include rotations or inversions or a mix of both
-#		added a new function GenMoreData
-#  
-# 3) Adding changes that Marcus incorporated
-# 4) Change in the amp_out array in the all_loss function
-#
-###########################################
+# ###########################################
 
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy
 plt.switch_backend('agg')
 
 from time import strftime
@@ -54,7 +44,7 @@ class double_conv(nn.Module):
 
 	Values that can be tuned are: momentum and Grad of the leaky relu 
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.7):
 		super(double_conv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True), 
@@ -76,7 +66,7 @@ class inconv(nn.Module):
 	"""
 	Same as the previous convolutional layer, however, the second convolution is summarized in one operation opposed to three
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.7):
 		super(inconv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=True), 
@@ -105,7 +95,7 @@ class down(nn.Module):
 			double_conv(in_ch, out_ch, LRLUGrad, eps, momentum),
 		)
 	def forward(self, x):
-		if self.checkpoints:
+		if self.checkpoints is True:
 			x = checkpoint_sequential(self.mpconv, 2, x)
 		else:
 			x = self.mpconv(x)
@@ -122,11 +112,11 @@ class up01(nn.Module):
 		super(up01, self).__init__()
 		self.checkpoints = checkpoints
 		self.upconv = nn.Sequential(
-			nn.Upsample(scale_factor=2, mode='trilinear'),
+			nn.Upsample(scale_factor=2, mode='nearest'),
 			double_conv(in_ch, out_ch, LRLUGrad, eps, momentum),
 		)
 	def forward(self, x):
-		if self.checkpoints:
+		if self.checkpoints is True:
 			x = checkpoint_sequential(self.upconv, 2, x)
 		else:
 			x = self.upconv(x)
@@ -142,11 +132,11 @@ class up02(nn.Module):
 		super(up02, self).__init__()
 		self.checkpoints = checkpoints
 		self.upconv = nn.Sequential(
-			nn.Upsample(scale_factor=2, mode='trilinear'),
+			nn.Upsample(scale_factor=2, mode='nearest'),
 			double_conv(in_ch, out_ch, LRLUGrad, eps, momentum),
 		)
 	def forward(self, x):
-		if self.checkpoints:
+		if self.checkpoints is True:
 			x = checkpoint_sequential(self.upconv, 2, x)
 		else:
 			x = self.upconv(x)
@@ -168,24 +158,36 @@ class NNModel(nn.Module):
 	'''
 	summing up all the operations to create the full network
 	'''
-	def __init__(self, n_channels=1, n_classes=1, momentum = 0.9, checkpoints = False):
+	def __init__(self, n_channels=1, n_classes=1, checkpoints=False):
 		super(NNModel, self).__init__()
 		self.inconv = inconv(n_channels, 64)
-		self.down1 = down(64, 128, momentum = momentum, checkpoints = checkpoints)
-		self.down2 = down(128, 256, momentum = momentum, checkpoints = checkpoints)
-		self.down3 = down(256, 512, momentum = momentum, checkpoints = checkpoints)
-		self.down4 = down(512, 1024, momentum = momentum, checkpoints = checkpoints)
+		self.down1 = down(64, 128, checkpoints=checkpoints)
+		self.down2 = down(128, 256, checkpoints=checkpoints)
+		self.down3 = down(256, 512, checkpoints=checkpoints)
+		self.down4 = down(512, 1024, checkpoints=checkpoints)
 
-		self.up01 = up01(512, 256, momentum = momentum, checkpoints = checkpoints)
-		self.up02 = up01(256, 128, momentum = momentum, checkpoints = checkpoints)
-		self.up03 = up01(128, 64, momentum = momentum, checkpoints = checkpoints)
+		self.up01 = up01(512, 256, checkpoints=checkpoints)
+		self.up02 = up01(256, 128, checkpoints=checkpoints)
+		self.up03 = up01(128, 64, checkpoints=checkpoints)
 		self.outc00 = outconv(64, n_classes)
 
-		self.up11 = up01(512, 256, momentum = momentum, checkpoints = checkpoints)
-		self.up12 = up01(256, 128, momentum = momentum, checkpoints = checkpoints)
-		self.up13 = up01(128, 64, momentum = momentum, checkpoints = checkpoints)
+		self.up11 = up01(512, 256, checkpoints=checkpoints)
+		self.up12 = up01(256, 128, checkpoints=checkpoints)
+		self.up13 = up01(128, 64, checkpoints=checkpoints)
 		self.outc11 = outconv(64, n_classes)
-
+	
+	def DisableCheckpoints(self):
+		self.down1.checkpoints = False
+		self.down2.checkpoints = False
+		self.down3.checkpoints = False
+		self.down4.checkpoints = False
+		self.up01.checkpoints = False
+		self.up02.checkpoints = False
+		self.up03.checkpoints = False
+		self.up11.checkpoints = False
+		self.up12.checkpoints = False
+		self.up13.checkpoints = False
+	
 	def forward(self, x):
 		x = self.inconv(x)
 		x = self.down1(x)
@@ -205,26 +207,10 @@ class NNModel(nn.Module):
 		x2 = self.up13(x2)
 		x2 = self.outc11(x2)
 
-		#activation function is a Sigmoid for the amplitude branch
-		#activation function is a Tanh for the phase branch
-		#s = nn.Sigmoid() #output range [0,1]
-		#x1 = s(x1) 
-		#x2 = s(x2) 
-		x1 = torch.relu(x1)
-		x2 = torch.relu(x2)
-		#x2 = torch.remainder(x2,1.0)
-
-		# Define threshold such that only the phase of the object is incorporated in the loss 
-		# sw_thresh = 0.05
-		# mask = torch.tensor([0,1],dtype=x1.dtype, device=x1.device)
-		# x1 = torch.where(x1<sw_thresh,mask[0],x1) #thresold value for the object below which everything is zero
-
-
-		# clamping the phase channel to -1,1 then shifting on -pi,pi scale 
-		#x2 = torch.clamp(x2, min=0.0, max=1.0) #clamping the phase values # Not really needed if tanh function
-		#x2 = torch.where(x1<sw_thresh, mask[0],x2) #only considering the phase in the region where the object exists
-
-		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together
+		x1 = torch.relu(x1) #activation function in the final layer is a relu opposed to a leakReLU
+		x2 = torch.relu(x2) #activation function in the final layer is a relu opposed to a leakReLU
+		x2 = torch.clamp(x2, min=0.0, max=1.0) #clamping the phase values to be between -pi and pi 
+		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
 
 		return x0
 
@@ -270,7 +256,7 @@ class CNNTrain():
 			self.device = torch.device("cuda")
 		else:
 			self.device = torch.device("cpu")
-	def SetInputData(self, fname, add_noise = True):
+	def SetInputData(self, fname):
 		"""
 		Load Fourier-space amplitude diffraction data 
 		from training. Shape is: (n,1,x,y,z).
@@ -279,22 +265,9 @@ class CNNTrain():
 		"""
 		self.data['input_data'] = np.load(fname)
 		shp = self.data['input_data'].shape
-
-		### Adding noise to diffraction data ###
-		
-		if add_noise:
-			print('Adding noise to diffraction data ...')
-			for i in range(0,shp[0]):
-				mean = np.mean(self.data['input_data'][i,0,:,:,:])
-				std_dev = np.std(self.data['input_data'][i,0,:,:,:])
-
-				self.data['input_data'][i,0,:,:,:] = self.data['input_data'][i,0,:,:,:] + np.random.normal(mean/2,std_dev/2,(shp[-3],shp[-2],shp[-1]))
-			print('Adding noise: Complete')
-
 		self.data['target_data1'] = np.zeros((shp[0], shp[-3], shp[-2], shp[-1]), dtype='float32')
 		self.data['target_data1'][:] = self.data['input_data'][:,0,:,:,:]
 		self.WrapAroundData(self.data['target_data1'])
-
 	def WrapAroundData(self, data):
 		def CalcThread(idxrange):
 			for i in range(idxrange[0], idxrange[1], 1):
@@ -320,80 +293,11 @@ class CNNTrain():
 		[:,0,:,:,:] is amplitude, [:,1,:,:,:] is phase.
 		"""
 		self.data['target_data0'] = np.load(fname)
-
-	def GenMoreData(self, n=2):
-		"""
-		A function for the generation of more diffraction data from the already loaded data
-		The purpose is to randomly rotate or invert the diffraction data and its corresponding complex object
-		This improves the stability of the network and works well against network overfitting
-		"""
-		print('Generating more data: %d times the original size'%n)
-		shp = self.data['target_data0'].shape
-		shp2 = self.data['input_data'].shape
-		# #
-		X2 = shp2[-3]//2
-		X4 = shp2[-3]//4
-		Y2 = shp2[-2]//2
-		Y4 = shp2[-2]//4
-		Z2 = shp2[-1]//2
-		Z4 = shp2[-1]//4
-		
-		
-		for k in range(0,n-1):
-
-			for i in range(0,shp[0]):
-
-				j = i+shp[0]
-				phi = np.random.randint(0,180)
-				chi = np.random.randint(0,180)
-				eta = np.random.randint(0,180)
-
-				flip_axis = np.random.randint(1,3)
-
-				new_array = np.zeros((1,2,shp[-3],shp[-2],shp[-1]))
-
-				### rotating the amp array and the diffraction array by a random angle between [0,180] about each axis
-
-				new_array[0,:,:,:,:] = scipy.ndimage.rotate(self.data['target_data0'][i,:,:,:,:], angle = phi, axes = (2,3), reshape=False, mode = 'constant', order = 1 )
-				new_array[0,:,:,:,:] = scipy.ndimage.rotate(new_array[0,:,:,:,:], angle = chi, axes = (1,2), reshape=False, mode = 'constant', order = 1 )
-				new_array[0,:,:,:,:] = scipy.ndimage.rotate(new_array[0,:,:,:,:], angle = eta, axes = (3,1), reshape=False, mode = 'constant', order = 1 )
-
-				### flipping the elements of the array along one random axis
-				new_array[0,:,:,:,:] = np.flip(new_array[0,:,:,:,:], flip_axis)
-
-				self.data['target_data0'] = np.append(self.data['target_data0'], new_array, axis = 0)
-
-				rs_complex = np.zeros((shp[-3] * 2, shp[-2] * 2, shp[-1] * 2), dtype=np.csingle)
-				rs_complex[X2-X4:X2+X4,Y2-Y4:Y2+Y4,Z2-Z4:Z2+Z4] =  self.data['target_data0'][j,0,:,:,:] * np.cos(np.pi * self.data['target_data0'][j,1,:,:,:]) + 1j*self.data['target_data0'][j,0,:,:,:] * np.sin(np.pi * self.data['target_data0'][j,1,:,:,:])
-
-
-				intermediate_diff = np.zeros((1,1,shp[-3]*2,shp[-2]*2,shp[-1]*2))
-				intermediate_diff[0,0,:,:,:] = np.abs(np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(rs_complex))))
-				self.data['input_data'] = np.append(self.data['input_data'], intermediate_diff, axis=0)
-
-				del new_array, rs_complex, intermediate_diff 
-
-				if i%(shp[0]/500) == 0:
-					print("finished generating %d data points"%(i+1))
-		
-		
-		self.data['target_data1'] = np.zeros((shp[0]*n, shp2[-3], shp2[-2], shp2[-1]), dtype='float32')
-		self.data['target_data1'][:] = self.data['input_data'][:,0,:,:,:]
-		self.WrapAroundData(self.data['target_data1'])
-
-
-		print('Generating more data is complete')
-		print('The size of the target data 1 array is: %d'%self.data['target_data1'].shape)
-		print('The size of the target data 0 array is: %d'%self.data['target_data0'].shape)
-		print('The size of the input array is: %d'%self.data['input_data'].shape)
-
-
 	def SetModel(self, model, **kwargs):
 		"""
 		Selecting the model to be used for the network.
 		Keywords are passed to model if they exist in the model.
 		"""
-		print('Setting model ... ')
 		model_args = self.GetKwArgs(model, kwargs)
 		self.model = model(**model_args).to(self.device)
 		if self.device.type == "cuda":
@@ -401,7 +305,7 @@ class CNNTrain():
 			if cuda_device_count > 1:
 				self.cuda_device_count = cuda_device_count
 				self.model = nn.DataParallel(self.model)
-			self.model.to(self.device)
+				self.model.to(self.device)
 			print('Using %s'%torch.cuda.get_device_name(0))
 		else:
 			print('Using %s'%self.device.type)
@@ -409,7 +313,7 @@ class CNNTrain():
 		"""
 		Set the validation size of the training set
 		"""
-		if valid_size > 0.0 and valid_size < 1.0:
+		if valid_size >= 0.0 and valid_size < 1.0:
 			self.valid_size = valid_size
 	def SplitData(self):
 		"""
@@ -421,7 +325,7 @@ class CNNTrain():
 		split = int(np.floor(self.valid_size * num_train))
 		np.random.shuffle(indices)
 		self.train_test_idxs['train'], self.train_test_idxs['test'] = indices[split:], indices[:split]
-	def SetBatchSize(self, batch_size): 
+	def SetBatchSize(self, batch_size): #FIXME
 		"""
 		sets the batch size to be used in the training
 		"""
@@ -433,9 +337,6 @@ class CNNTrain():
 		"""
 		selects random samples to be used for the validation
 		puts batches of the traning set together
-		x_t = inputdata i.e diff data shape n,1,x,y,z
-		y_t = targetdata 0 i.e. object shape n,2,x/2,y/2,z/2 
-		z_t = targetdata 1 i.e. diff data, shape n,x,y,z
 		"""
 		datax = self.data['input_data'][index].astype('float32')
 		datay = self.data['target_data0'][index].astype('float32')
@@ -611,7 +512,7 @@ class CNNTrain():
 		
 		All losses are merged together in a single loss function.
 		"""
-		_, _, X,Y,Z = self.data['input_data'].shape
+		_, __, X,Y,Z = self.data['input_data'].shape
 		X2 = X//2
 		X4 = X//4
 		Y2 = Y//2
@@ -626,26 +527,23 @@ class CNNTrain():
 			loss1 = self.chi_loss(output[:, 0, :, :, :], target[:, 0, :, :, :])
 			loss2 = self.chi_loss(output[:, 1, :, :, :], target[:, 1, :, :, :])
 
-		# Combining the two branches into one complex object then taking the absolute value of fourier transform 
+		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
+		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
+		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
+		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
+		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
-		obj_comp = torch.complex(output[:, 0, :, :, :]*torch.cos(output[:, 1, :, :, :]*torch.pi*2),output[:, 0, :, :, :]*torch.sin(output[:, 1, :, :, :]*2*torch.pi))
-	
-		pad_dim = (Z4,Z4,Y4,Y4,X4,X4)
-		obj_comp = F.pad(obj_comp, pad_dim, "constant", 0)
-
-		amp_out = torch.abs(torch.fft.fftn(obj_comp, dim=(-3,-2,-1))) 
-		loss3 = self.pcc_loss(amp_out, input)
+		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+		loss3 = self.pcc_loss(amp_out, input) 
 		
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
-		del obj_comp
-		del amp_out
 		return loss
 		
 	def criterion(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
 		"""
 		Call the desired loss function.
 		"""
-		return self.all_loss(output=output, target=target, input= input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
+		return self.all_loss(output, target, input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
 
 	def GetLR(self, optimiser):
 		"""
@@ -670,15 +568,10 @@ class CNNTrain():
 		"""
 		Perform the training of the network.
 		loss_params = {alpha=1.0, # loss ratio amp
-						beta=1.0, # loss ratio phase
-						gamma=1.0, # loss ratio Fourier amp
-						rs_pcc=False # Use Pearson for Real space}
-
-		x_train/test = inputdata i.e diff data shape n,1,x,y,z
-		y_train/test = targetdata0 i.e. object shape n,2,x/2,y/2,z/2 
-		z_train/test = targetdata1 i.e. diff data, shape n,x,y,z
+									beta=1.0, # loss ratio phase
+									gamma=1.0, # loss ratio Fourier amp
+									rs_pcc=False # Use Pearson for Real space}
 		"""
-		print('Starting training ...')
 		self.datestr = strftime("%Y-%m-%d_%H.%M")
 		loss_args = self.GetKwArgs(self.criterion, loss_params)
 		for epoch in range(self.hyperpars['epochs']):  # loop over the dataset multiple times
@@ -705,6 +598,10 @@ class CNNTrain():
 				loss1 = self.criterion(y_train_predict, y_train, z_train, **loss_args)
 				loss1.backward()
 				#incorporate a clip on the values of the gradients, to avoid exploding gradients 
+				# Not recognised
+				#clip_grad_norm_(self.model.coder.parameters(), 2)
+				#clip_grad_norm_(self.model.ppha.parameters(), 2)
+				#clip_grad_norm_(self.model.aamp.parameters(), 1.25)
 				clip_grad_norm_(self.model.parameters(), max_norm = 10.0, norm_type=2)
 				# Optimise the weights and biases
 				for idi in range(sw_op):
@@ -714,7 +611,7 @@ class CNNTrain():
 				train_loss_tmp += loss1.item()
 				# print info if needed
 				if self.verbose:
-					if ii % self.print_every == 0:
+					if ii % self.print_every == 0: 
 						print('Epoch: %d, Batch: %5d, Batch loss: train: %.5f'%(epoch + 1, ii + 1, train_loss_tmp / (ii + 1)))
 				# # Loop end
 			# Update learning rate with scheduler
@@ -729,8 +626,8 @@ class CNNTrain():
 				for loader_batch_test in self.loader['test']:
 					x_test, y_test, z_test = loader_batch_test
 					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
-					y_test_predict = self.model.forward(x_test)
-					loss2 = self.criterion(y_test_predict, y_test, z_test, **loss_args)
+					y_pred = self.model.forward(x_test)
+					loss2 = self.criterion(y_pred, y_test, z_test, **loss_args)
 					valid_loss_tmp += loss2.item()
 			# Update graph data
 			self.train_loss.append(train_loss_tmp / len(self.loader['train']))
@@ -750,13 +647,11 @@ class CNNTrain():
 			# Save
 			if epoch == (self.hyperpars['epochs'] -1):
 				self.SaveModel(epoch)
-				print('Training Complete')
 
 	def SaveModel(self, epoch=0):
 		"""
 		Save model.
 		"""
-		print('Saving Model ...')
 		torch.save(self.model.state_dict(),'CP{}'.format(epoch+1)+'_'+self.datestr+'.pth')
 	def SaveParameters(self, training=True):
 		"""
@@ -806,6 +701,108 @@ class CNNTrain():
 		#plt.show()
 
 
+class CNNPredictOld():
+	"""
+	Prediction from trained neural network.
+	"""
+	def __init__(self):
+		self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+		self.expdata = None
+		self.trained_network = None
+		self.output = None
+		self.model = None
+	def GetKwArgs(self, obj, kwargs):
+		obj_sigs = []
+		obj_args = {}
+		for arg in inspect.signature(obj).parameters.values():
+			if not arg.default is inspect._empty:
+				obj_sigs.append(arg.name)
+		for key, value in kwargs.items():
+			if key in obj_sigs:
+				obj_args[key] = value
+		return obj_args
+	def SetDevice(self, device='cuda'):
+		"""
+		Sets the device to either CPU ('cpu') or GPU ('cuda'), if available.
+		"""
+		if torch.cuda.is_available() and device == 'cuda':
+			self.device = torch.device("cuda")
+		else:
+			self.device = torch.device("cpu")
+	def SetModel(self, model, **kwargs):
+		"""
+		Selecting the model to be used for the network.
+		Keywords are passed to model if they exist in the model.
+		"""
+		model_args = self.GetKwArgs(model, kwargs)
+		self.model = model(**model_args).to(self.device)
+		if self.device.type == "cuda" and torch.cuda.device_count() > 1:
+			self.model = nn.DataParallel(self.model)
+	def SetExpData(self, fname, mask=100, square_root=True):
+		"""
+		Set diffraction data used for prediction.
+		Mask out the noise by selecting a threshold 
+		value below which everything is set to zero.
+		Normalizes the array to [0,1] interval.
+		Square root if data is intensity.
+		"""
+		self.expdata = np.abs(np.load(fname))
+		self.expdata[self.expdata < mask] = 0.0
+		if square_root:
+			self.expdata = np.sqrt(self.expdata)
+		max = 1.0/self.expdata.max()
+		self.expdata = self.expdata * max
+	def SetTrainedNN(self, fname):
+		"""
+		Load the trained neural network.
+		Must be a .pth file.
+		"""
+		self.trained_network = fname
+	def SetOutputFile(self, fname):
+		"""
+		Set output file, i.e. the 
+		reconstructed object.
+		"""
+		self.output = fname
+	def Predict(self):
+		"""
+		Forward propagate the diffraction pattern 
+		through the trained neural network and  
+		obtain an output complex object 
+		"""
+		i = self.expdata.shape[0]
+		j = self.expdata.shape[1]
+		k = self.expdata.shape[2]
+
+		torcharray = np.zeros((1,1,i,j,k), dtype=np.float32)
+		torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
+		torcharray = torch.from_numpy(torcharray)
+		
+		if self.device.type == 'cuda':
+			self.model.load_state_dict(torch.load(self.trained_network))
+			torcharray = torcharray.to(device = self.device, dtype = torch.float)
+		else:
+			self.model.load_state_dict(torch.load(self.trained_network, map_location = 'cpu'))
+
+		self.model.eval()
+			
+		with torch.no_grad():
+			sequence = self.model(torcharray)
+			
+		sequence = sequence.cpu()
+
+		amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
+		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
+
+		amp[:] = sequence[0,0,:,:,:]
+		pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
+		pha[:] -= np.pi
+
+		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
+
+		np.save(self.output, com)
+
+
 class CNNPredict(CNNTrain):
 	"""
 	Prediction from trained neural network.
@@ -840,8 +837,6 @@ class CNNPredict(CNNTrain):
 		self.torcharray = np.zeros((1,1,i,j,k), dtype=np.float32)
 		self.torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
 		self.torcharray = torch.from_numpy(self.torcharray)
-
-		del self.expdata 
 	def SetTrainedNN(self, fname):
 		"""
 		Load the trained neural network.
@@ -859,6 +854,7 @@ class CNNPredict(CNNTrain):
 		Set output file, i.e. the 
 		reconstructed object.
 		"""
+		
 		self.output = fname.split(".npy")[0]+"_"+self.datestr+'.npy'
 	def all_loss(self, output, input):
 		X,Y,Z = self.expdata.shape
@@ -875,7 +871,7 @@ class CNNPredict(CNNTrain):
 		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
-		amp_out = torch.abs(obj_comp[:,:,:,:])
+		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
 		loss = self.pcc_loss(amp_out, input) 
 		del obj_comp
 		del amp_out
@@ -895,9 +891,9 @@ class CNNPredict(CNNTrain):
 			
 		with torch.no_grad():
 			sequence = self.model(self.torcharray)
-		
-		sequence = sequence.cpu()
 			
+		sequence = sequence.cpu()
+
 		i,j,k = self.expdata.shape
 		amp = np.zeros((i//2,j//2,k//2), dtype=np.double)
 		pha = np.zeros((i//2,j//2,k//2), dtype=np.double)
@@ -1000,10 +996,9 @@ class CNNPredict(CNNTrain):
 def Train():
 	cnn = CNNTrain()
 	cnn.SetDevice('cuda')
-	cnn.SetInputData('fs_amps.npy', add_noise=True) # noise is a normal random distribution with its mean at mu/2
+	cnn.SetInputData('fs_amps.npy')
 	cnn.SetTargetData('rs_objs.npy')
-	cnn.GenMoreData(n = 2) # the number of data points is muliplied by n and undergo random rotations
-	cnn.SetModel(NNModel, checkpoints=False)
+	cnn.SetModel(NNModel, checkpoints=True)
 	cnn.SetValidSize(0.1)
 	cnn.SplitData()
 	cnn.SetBatchSize(5)
@@ -1013,8 +1008,8 @@ def Train():
 	cnn.InitialiseWeights(nn.init.kaiming_normal_, mode='fan_in', nonlinearity='leaky_relu')
 	#cnn.InitialiseWeights(nn.init.xavier_normal_)
 	cnn.SetLRStepSize(25)
-	cnn.AddLR(1e-3)
-	cnn.AddLR(1e-5)
+	cnn.AddLR(1e-4)
+	cnn.AddLR(1e-6)
 	cnn.SetGamma(0.75)
 	cnn.AddOptimiser(optim.ASGD)
 	cnn.AddOptimiser(optim.Adam, amsgrad=True, eps=1e-8)
@@ -1033,7 +1028,7 @@ def Predict():
 	predict = CNNPredict()
 	predict.SetDevice('cuda')
 	#predict.SetDevice('cpu')
-	predict.SetModel(NNModel, momentum = 0.9, checkpoints=True)
+	predict.SetModel(NNModel, checkpoints=True)
 	predict.SetExpData('expdata.npy', mask=500, square_root=True)
 	predict.SetTrainedNN("CP.pth")
 	predict.SetOutputFile('output.npy')

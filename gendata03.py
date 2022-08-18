@@ -5,14 +5,10 @@
 # 
 # Author: Marcus Newton
 # 
-# Version 0.4
+# Version 0.3
 # Licence: GNU GPL 3
 #
-# Version Update: 
-# 1) Phase generation is on a [-1,1] range opposed to [0,1]
-#
-#############################################
-
+# ###########################################
 
 from math import sin, cos, pi, acos, sqrt
 import numpy as np
@@ -151,17 +147,9 @@ class GenData():
 		clz = 6 + 3 * np.random.rand(1)
 		rs_pha, _, _, _ = self.RSPhase(N, rL, h, clx, cly, clz)
 		rs_pha = np.real(rs_pha)
-
-
-		#rs_pha -= rs_pha.min() # if [0,a] interval is desired
-		#rs_pha /= rs_pha.max() # if [0,1]
-
-		# phase on [-1,1] interval
-		if rs_pha.max()>abs(rs_pha.min()):
-			rs_pha /= rs_pha.max()
-		else:
-			rs_pha /= rs_pha.min()
-
+		# phase on [0,1] interval
+		rs_pha -= rs_pha.min()
+		rs_pha /= rs_pha.max()
 		return rs_pha
 	def SingleParticle(self, mesh, kernel):
 		# Create random rotation array
@@ -204,11 +192,11 @@ class GenData():
 			for i in range(idxrange[0], idxrange[1], 1):
 				rs_amp_phase[i,0,:,:,:], rs_amp_phase[i,1,:,:,:] = self.SingleParticle(mesh, kern)
 				rs_complex = np.zeros((self.rs_shp[-3] * 2, self.rs_shp[-2] * 2, self.rs_shp[-1] * 2), dtype=np.csingle)
-				rs_complex[X2-X4:X2+X4,Y2-Y4:Y2+Y4,Z2-Z4:Z2+Z4] =  rs_amp_phase[i,0,:,:,:] * np.cos(np.pi * rs_amp_phase[i,1,:,:,:]) + 1j*rs_amp_phase[i,0,:,:,:] * np.sin(np.pi * rs_amp_phase[i,1,:,:,:])
+				rs_complex[X2-X4:X2+X4,Y2-Y4:Y2+Y4,Z2-Z4:Z2+Z4] =  rs_amp_phase[i,0,:,:,:] * np.cos(2.0 * np.pi * rs_amp_phase[i,1,:,:,:]) + 1j*rs_amp_phase[i,0,:,:,:] * np.sin(2.0 * np.pi * rs_amp_phase[i,1,:,:,:])
 				fs_amp[i,0,:,:,:] = np.abs(np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(rs_complex))))
 				fs_amp[i,0,:,:,:] /= np.max(fs_amp[i,0,:,:,:])
 				fs_amp[i,0,:,:,:][fs_amp[i,0,:,:,:] < self.fsmask] = 0.0
-		# # 
+		# #
 		xs = []
 		blk = self.n//self.nthreads
 		for i in range(self.nthreads):
@@ -235,9 +223,12 @@ class GenData():
 if __name__ == '__main__':
 	d = GenData()
 	d.SetShape([32,32,32])
-	d.SetN(500)
+	d.SetN(5000)
 	d.SetMorphology("hexprism")
 	#d.SetMorphology("octahedron")
 	#d.SetMorphology("monoclinic")
 	d.GenShapeData()
 	d.SaveData()
+	
+
+

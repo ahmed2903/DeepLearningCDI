@@ -226,7 +226,7 @@ class NNModel(nn.Module):
 
 		# clamping the phase channel to -1,1 then shifting on -pi,pi scale 
 		x2 = torch.clamp(x2, min=-1, max=1) #clamping the phase values # Not really needed if tanh function
-		x2 = torch.where(x1<sw_thresh, mask[0],x2) #only considering the phase in the region where the objec exists
+		x2 = torch.where(x1<sw_thresh, mask[0],x2) #only considering the phase in the region where the object exists
 		
 		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
 

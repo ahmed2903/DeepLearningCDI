@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as ss
-from cnnphase08 import NNModel, CNNTrain, CNNPredict
+from cnnphase09 import NNModel, CNNTrain, CNNPredict
 
 # Generate data
 def Gen():
@@ -23,9 +23,9 @@ def Train():
 	cnn.SetDevice('cuda')
 	cnn.SetInputData('fs_amps.npy', add_noise=True) # noise is a normal random distribution with its mean at mu/2
 	cnn.SetTargetData('rs_objs.npy')
-	cnn.GenMoreData(n = 3) # the number of data points is muliplied by n and undergo random rotations
+	cnn.GenMoreData(n = 2) # the number of data points is muliplied by n and undergo random rotations
 	cnn.SetModel(NNModel, momentum = 0.7,  checkpoints=False)
-	cnn.SetValidSize(0.1)
+	cnn.SetValidSize(0.2)
 	cnn.SplitData()
 	cnn.SetBatchSize(32)
 	cnn.LoadSplitTrain(loadtype='train')
@@ -34,8 +34,8 @@ def Train():
 	cnn.InitialiseWeights(nn.init.kaiming_normal_, mode='fan_in', nonlinearity='leaky_relu')
 	#cnn.InitialiseWeights(nn.init.xavier_normal_)
 	cnn.SetLRStepSize(10)
-	cnn.AddLR(1e-4)
-	cnn.AddLR(1e-6)
+	cnn.AddLR(1e-3)
+	cnn.AddLR(1e-5)
 	#cnn.SetGamma(0.75)
 	cnn.AddGamma(0.9)
 	cnn.AddGamma(0.95)
@@ -45,8 +45,8 @@ def Train():
 	#cnn.AddOptimiser(optim.RMSprop, alpha=0.99, eps=1e-08, weight_decay=0, momentum=0.9, centered=False)
 	cnn.AddScheduler(ss.StepLR)
 	cnn.AddScheduler(ss.StepLR)
-	cnn.SetNEpochs(50)
-	cnn.SetOpStep(10)
+	cnn.SetNEpochs(100)
+	cnn.SetOpStep(90)
 	cnn.TrainNN(rs_pcc=False)
 	cnn.SaveParameters()
 	cnn.SaveLoss()
