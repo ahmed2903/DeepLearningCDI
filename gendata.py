@@ -136,7 +136,7 @@ class GenData():
 		# correlated surface generation including convolution (faltning) and inverse
 		# Fourier transform and normalizing prefactors
 		#f = 2 / np.sqrt(np.pi) * (np.mean(rL) / np.mean(N) / np.sqrt(clx * cly * clz)) * np.fft.ifftn(np.fft.fftn(ZZ) * np.fft.fftn(F))
-		f = 2 / np.sqrt(np.pi) * (1.0/np.sqrt(clx * cly * clz)) * np.fft.ifftn(np.fft.fftn(ZZ) * np.fft.fftn(F))
+		f = (2 / (np.pi**0.75)) * (1.0/np.sqrt(clx * cly * clz)) * np.fft.ifftn(np.fft.fftn(ZZ) * np.fft.fftn(F))
 		return f, x, y, z
 	def MakePhase(self):
 		N=self.rs_shp
@@ -147,10 +147,13 @@ class GenData():
 		clz = 6 + 3 * np.random.rand(1)
 		rs_pha, _, _, _ = self.RSPhase(N, rL, h, clx, cly, clz)
 		rs_pha = np.real(rs_pha)
-		# phase on [0,1] interval
+		# # phase on [-pi,pi] interval
+			
 		rs_pha -= rs_pha.min()
 		rs_pha /= rs_pha.max()
+
 		return rs_pha
+		
 	def SingleParticle(self, mesh, kernel):
 		# Create random rotation array
 		u, v = np.random.rand(1), np.random.rand(1)
@@ -187,12 +190,12 @@ class GenData():
 		Y4 = shp[-2]//4
 		Z2 = shp[-1]//2
 		Z4 = shp[-1]//4
-		# #
+		# # 2 * np.pi * 
 		def CalcThread(idxrange):
 			for i in range(idxrange[0], idxrange[1], 1):
 				rs_amp_phase[i,0,:,:,:], rs_amp_phase[i,1,:,:,:] = self.SingleParticle(mesh, kern)
 				rs_complex = np.zeros((self.rs_shp[-3] * 2, self.rs_shp[-2] * 2, self.rs_shp[-1] * 2), dtype=np.csingle)
-				rs_complex[X2-X4:X2+X4,Y2-Y4:Y2+Y4,Z2-Z4:Z2+Z4] =  rs_amp_phase[i,0,:,:,:] * np.cos(2.0 * np.pi * rs_amp_phase[i,1,:,:,:]) + 1j*rs_amp_phase[i,0,:,:,:] * np.sin(2.0 * np.pi * rs_amp_phase[i,1,:,:,:])
+				rs_complex[X2-X4:X2+X4,Y2-Y4:Y2+Y4,Z2-Z4:Z2+Z4] =  rs_amp_phase[i,0,:,:,:] * np.cos(2 * np.pi * rs_amp_phase[i,1,:,:,:]) + 1j*rs_amp_phase[i,0,:,:,:] * np.sin(2 * np.pi * rs_amp_phase[i,1,:,:,:])
 				fs_amp[i,0,:,:,:] = np.abs(np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(rs_complex))))
 				fs_amp[i,0,:,:,:] /= np.max(fs_amp[i,0,:,:,:])
 				fs_amp[i,0,:,:,:][fs_amp[i,0,:,:,:] < self.fsmask] = 0.0
@@ -222,8 +225,8 @@ class GenData():
 
 if __name__ == '__main__':
 	d = GenData()
-	d.SetShape([176,144,196])
-	d.SetN(500)
+	d.SetShape([32,32,32])
+	d.SetN(10)
 	d.SetMorphology("hexprism")
 	#d.SetMorphology("octahedron")
 	#d.SetMorphology("monoclinic")

@@ -5,7 +5,7 @@
 # 
 # Authors: Marcus Newton, Ahmed Mohamed.
 # 
-# Version 0.7
+# Version 0.12alpha
 # Licence: GNU GPL 3
 #
 # ###########################################
@@ -158,11 +158,13 @@ class NNModel(nn.Module):
 	'''
 	summing up all the operations to create the full network
 	'''
-	def __init__(self, n_channels=1, n_classes=1, checkpoints=False):
+	def __init__(self, n_channels=1, n_classes=1, checkpoints=False, phasemin=-1.0, phasemax=2.0):
 		super(NNModel, self).__init__()
+		self.phasemin = phasemin
+		self.phasemax = phasemax
 		self.inconv = inconv(n_channels, 64)
 		self.down1 = down(64, 128, checkpoints=checkpoints)
-		self.down2 = down(128, 256, checkpoints=checkpoints)
+		self.down2 = down(128, 256,checkpoints=checkpoints)
 		self.down3 = down(256, 512, checkpoints=checkpoints)
 		self.down4 = down(512, 1024, checkpoints=checkpoints)
 
@@ -194,7 +196,7 @@ class NNModel(nn.Module):
 		x = self.down2(x)
 		x = self.down3(x)
 		x = self.down4(x)
-		
+
 		x1 = x[:, 0::2, :, :] #dedicating half the channels for one branch
 		x1 = self.up01(x1)
 		x1 = self.up02(x1)
@@ -208,8 +210,9 @@ class NNModel(nn.Module):
 		x2 = self.outc11(x2)
 
 		x1 = torch.relu(x1) #activation function in the final layer is a relu opposed to a leakReLU
-		x2 = torch.relu(x2) #activation function in the final layer is a relu opposed to a leakReLU
-		x2 = torch.clamp(x2, min=0.0, max=1.0) #clamping the phase values to be between -pi and pi 
+		#x2 = torch.relu(x2) #activation function in the final layer is a relu opposed to a leakReLU
+		x2 = torch.clamp(x2, min=self.phasemin, max=self.phasemax) #clamp phase *loosely* between -3pi and 3pi
+		x2 = x2 % 1.0 # wrap phase outside -pi and pi
 		x0 = torch.cat((x1, x2), 1) # comnbining the two branches together 
 
 		return x0
@@ -309,6 +312,8 @@ class CNNTrain():
 			print('Using %s'%torch.cuda.get_device_name(0))
 		else:
 			print('Using %s'%self.device.type)
+
+		self.model = self.model.float()
 	def SetValidSize(self, valid_size):
 		"""
 		Set the validation size of the training set
@@ -533,8 +538,9 @@ class CNNTrain():
 		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
 		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
 
-		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
-		loss3 = self.pcc_loss(amp_out, input) 
+		#amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
+		amp_out = torch.abs(obj_comp[:,:,:,:])
+		loss3 = self.pcc_loss(amp_out, input)
 		
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3) / (alpha + beta + gamma)
 		return loss
@@ -564,6 +570,28 @@ class CNNTrain():
 		which the optimiser is changed.  
 		"""
 		self.hyperpars['op_step_size'] = int(step)
+	def AddOpStep(self, step):
+		"""
+		Set the optimiser step size in epochs after
+		which the optimiser is changed.  
+		"""
+		n = 1
+		op_step_size_str = 'op_step_size%d'%n
+		while op_step_size_str in self.hyperpars.keys():
+			n += 1
+			op_step_size_str = 'op_step_size%d'%n
+		self.hyperpars[op_step_size_str] = int(step)
+	def RemoveOpStep(self):
+		"""
+		Remove previously added optimiser step .
+		"""
+		n = 1
+		op_step_size_str = 'op_step_size%d'%n
+		while op_step_size_str in self.hyperpars.keys():
+			n += 1
+			op_step_size_str = 'op_step_size%d'%n
+		if n > 1:
+			self.hyperpars.pop('op_step_size%d'%(n-1), None)
 	def TrainNN(self, **loss_params):
 		"""
 		Perform the training of the network.
@@ -574,13 +602,29 @@ class CNNTrain():
 		"""
 		self.datestr = strftime("%Y-%m-%d_%H.%M")
 		loss_args = self.GetKwArgs(self.criterion, loss_params)
+		
+		
+		
 		for epoch in range(self.hyperpars['epochs']):  # loop over the dataset multiple times
 			train_loss_tmp = 0.0
 			self.model.train()
 			# #
 			sw_op = len(self.optimisers)
 			sw_sch = len(self.schedulers)
-			sw_op_flag = min(epoch // self.hyperpars['op_step_size'], sw_op - 1)
+			# #
+			op_n = 1
+			op_step_size_str = 'op_step_size%d'%op_n
+			op_step_sum = 0
+			while op_step_size_str in self.hyperpars:
+				op_step_sum += self.hyperpars[op_step_size_str]
+				if epoch < op_step_sum or op_n == sw_op:
+					sw_op_flag = op_n - 1
+					break
+				op_n += 1
+				op_step_size_str = 'op_step_size%d'%op_n
+			if 'op_step_size' in self.hyperpars:
+				sw_op_flag = min(epoch // self.hyperpars['op_step_size'], sw_op - 1)
+			# #
 			for ii, loader_batch_train in enumerate(self.loader['train'], 0):
 				# Get inputs.  Note: 'Variable' call is now depreciated.  
 				x_train, y_train, z_train = loader_batch_train
@@ -593,7 +637,7 @@ class CNNTrain():
 					if sw_op_flag == idi:
 						list(self.optimisers.values())[idi].zero_grad()
 				# Forward propagation
-				y_train_predict = self.model.forward(x_train)
+				y_train_predict = self.model(x_train)
 				# Define the loss and then backward propagate
 				loss1 = self.criterion(y_train_predict, y_train, z_train, **loss_args)
 				loss1.backward()
@@ -626,7 +670,7 @@ class CNNTrain():
 				for loader_batch_test in self.loader['test']:
 					x_test, y_test, z_test = loader_batch_test
 					x_test, y_test, z_test = x_test.to(self.device), y_test.to(self.device), z_test.to(self.device)
-					y_pred = self.model.forward(x_test)
+					y_pred = self.model(x_test)
 					loss2 = self.criterion(y_pred, y_test, z_test, **loss_args)
 					valid_loss_tmp += loss2.item()
 			# Update graph data
@@ -674,7 +718,11 @@ class CNNTrain():
 		if 'gamma' in self.hyperpars:
 			params += "Gamma (global): %2.6f \n" %self.hyperpars['gamma']
 		params += "Number of Epochs: %d \n" %self.hyperpars['epochs']
-		params += "Optimiser Step Size: %d \n" %self.hyperpars['op_step_size']
+		for key, value in self.hyperpars.items():
+			if key.startswith('op_step_size') and key != 'op_step_size':
+				params += "Optimiser Step Size: %d \n" %value
+		if 'op_step_size' in self.hyperpars:
+			params += "Optimiser Step Size (global): %d \n" %self.hyperpars['op_step_size']
 		if training:
 			params += "Valdiation Loss: %2.4f \n" %self.valid_loss[-1]
 		params += "Training Loss: %2.4f \n" %self.train_loss[-1]
@@ -836,7 +884,10 @@ class CNNPredict(CNNTrain):
 		i,j,k = self.expdata.shape
 		self.torcharray = np.zeros((1,1,i,j,k), dtype=np.float32)
 		self.torcharray[0,0,:,:,:]  = self.expdata[:,:,:]
-		self.torcharray = torch.from_numpy(self.torcharray)
+		self.torcharray = torch.from_numpy(self.torcharray).float().to(self.device)
+	def SetSupport(self, fname):
+		self.support = torch.abs(torch.from_numpy(np.load(fname)))
+		self.support = self.support.to(self.device)
 	def SetTrainedNN(self, fname):
 		"""
 		Load the trained neural network.
@@ -858,23 +909,50 @@ class CNNPredict(CNNTrain):
 		self.output = fname.split(".npy")[0]+"_"+self.datestr+'.npy'
 	def all_loss(self, output, input):
 		X,Y,Z = self.expdata.shape
-		X2 = X//2
 		X4 = X//4
-		Y2 = Y//2
 		Y4 = Y//4
-		Z2 =  Z//2
 		Z4 = Z//4
 
-		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
-		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
-		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
-		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
-		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
+		# Compute Penalty Term For Values Outside Support
+		unmasked_amp = torch.ones_like(self.support)
+		unmasked_amp[self.support > 0.5] = 0
+		unmasked_amp = output[:,0,:,:,:] * unmasked_amp
+		unmasked_amp = torch.sum(unmasked_amp)
+		total_amp = torch.sum(output[:,0,:,:,:])
+		amp_penalty = (unmasked_amp/total_amp) + 1e-4
 
-		amp_out = torch.sqrt(torch.abs(obj_comp[:,:,:,:]) **2 + torch.abs(obj_comp[:,:,:,:]) **2 +1e-40)
-		loss = self.pcc_loss(amp_out, input) 
-		del obj_comp
-		del amp_out
+		output[:,0,:,:,:] = output[:,0,:,:,:] * self.support
+
+		# Perform Fourier Transform on Output
+		pad = nn.ConstantPad3d((Z4,Z4,Y4,Y4,X4,X4), 0)
+		obj_comp = pad(output[:,0,:,:,:]) * torch.cos(2*torch.pi * pad(output[:,1,:,:,:])) + 1j * pad(output[:,0,:,:,:]) * torch.sin(2*torch.pi * pad(output[:,1,:,:,:]))
+		amp_out = torch.fft.fftshift(torch.fft.fftn(obj_comp, dim= (-3,-2,-1)), dim= (-3,-2,-1))
+		amp_out = torch.abs(amp_out[:,:,:,:])
+		amp_out = amp_out/(torch.max(amp_out)+1e-8)
+
+		# Fourier Space Loss
+		pcc_loss = self.pcc_loss(amp_out, input) 
+		chi_loss = self.chi_loss(amp_out, input)
+		
+		epoch = len(self.train_loss)
+
+		pcc_period = 100
+		supp_period = 20
+		osc_period = pcc_period + supp_period
+		osc_phase = epoch % osc_period 
+
+		if osc_phase<supp_period:
+			alpha = 1.0
+			beta = 0.0
+			gamma = 1.0
+
+		else:
+			alpha = 1.0
+			beta = 0.5
+			gamma = 0.5
+		
+		loss = (alpha*pcc_loss + beta*chi_loss +gamma*amp_penalty)/(alpha+beta+gamma)
+		
 		return loss
 	def criterion(self, output, input):
 		"""
@@ -900,7 +978,6 @@ class CNNPredict(CNNTrain):
 
 		amp[:] = sequence[0,0,:,:,:]
 		pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
-		pha[:] -= np.pi
 
 		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 
@@ -915,15 +992,27 @@ class CNNPredict(CNNTrain):
 			# #
 			sw_op = len(self.optimisers)
 			sw_sch = len(self.schedulers)
-			sw_op_flag = min(epoch // self.hyperpars['op_step_size'], sw_op - 1)
-			
+			# #
+			op_n = 1
+			op_step_size_str = 'op_step_size%d'%op_n
+			op_step_sum = 0
+			while op_step_size_str in self.hyperpars:
+				op_step_sum += self.hyperpars[op_step_size_str]
+				if epoch < op_step_sum or op_n == sw_op:
+					sw_op_flag = op_n - 1
+					break
+				op_n += 1
+				op_step_size_str = 'op_step_size%d'%op_n
+			if 'op_step_size' in self.hyperpars:
+				sw_op_flag = min(epoch // self.hyperpars['op_step_size'], sw_op - 1)
+			# #
 			for idi in range(sw_op):
 				if sw_op_flag == idi:
 					list(self.optimisers.values())[idi].zero_grad()
 			if AMP:
 				with torch.cuda.amp.autocast():
 					# Forward propagation
-					y_train_predict = self.model.forward(self.torcharray)
+					y_train_predict = self.model(self.torcharray)
 					# Define the loss and then backward propagate
 					loss1 = self.criterion(y_train_predict, self.torcharray)
 				#
@@ -933,7 +1022,7 @@ class CNNPredict(CNNTrain):
 						scaler.unscale_(list(self.optimisers.values())[idi])
 			else:
 				# Forward propagation
-				y_train_predict = self.model.forward(self.torcharray)
+				y_train_predict = self.model(self.torcharray)
 				# Define the loss and then backward propagate
 				loss1 = self.criterion(y_train_predict, self.torcharray)
 				loss1.backward()
@@ -971,7 +1060,7 @@ class CNNPredict(CNNTrain):
 				self.model.eval()
 				with torch.no_grad():
 					self.model.DisableCheckpoints()
-					sequence = self.model.forward(self.torcharray)
+					sequence = self.model(self.torcharray)
 
 				sequence = sequence.cpu()
 
@@ -981,7 +1070,6 @@ class CNNPredict(CNNTrain):
 
 				amp[:] = sequence[0,0,:,:,:]
 				pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
-				pha[:] -= np.pi
 
 				com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 

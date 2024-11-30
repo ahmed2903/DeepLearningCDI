@@ -5,7 +5,7 @@
 # 
 # Authors: Marcus Newton, Ahmed Mohamed.
 # 
-# Version 0.10
+# Version 0.12_beta
 # Licence: GNU GPL 3
 #
 # ###########################################
@@ -49,16 +49,17 @@ class double_conv(nn.Module):
 
 	Values that can be tuned are: momentum and Grad of the leaky relu 
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9, pad = 1, dilation = 1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.7, pad = 1, dilation = 1):
 		super(double_conv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(pad, pad, pad), bias=True, dilation = dilation), 
-			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True), 
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
 			nn.LeakyReLU(LRLUGrad, inplace=True),
+
 			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 1, 1), stride=1, padding=(1, 0, 0), bias=True), 
 			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 3, 1), stride=1, padding=(0, 1, 0), bias=True),
 			nn.Conv3d(out_ch, out_ch, kernel_size=(1, 1, 3), stride=1, padding=(0, 0, 1), bias=True),
-			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True),
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False), 
 			nn.LeakyReLU(LRLUGrad, inplace=True), 
 		)
 	def forward(self, x):
@@ -96,15 +97,15 @@ class inconv(nn.Module):
 	"""
 	Same as the previous convolutional layer, however, the second convolution is summarized in one operation opposed to three
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.7):
 		super(inconv, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv3d(in_ch, out_ch, kernel_size=(1, 1, 1), stride=1, padding=(0, 0, 0), bias=True), 
-			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True),
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False),
 			nn.LeakyReLU(LRLUGrad, inplace=False), 
 			 
 			nn.Conv3d(out_ch, out_ch, kernel_size=(3, 3, 3), stride=1, padding=(1, 1, 1), bias=True), 
-			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True),
+			nn.BatchNorm3d(num_features=out_ch, eps=eps, momentum=momentum, affine=True, track_running_stats=False),
 			nn.LeakyReLU(LRLUGrad, inplace=True),
 		)
 	def forward(self, x):
@@ -117,7 +118,7 @@ class down(nn.Module):
 	Main encoder part
 	Applying a maxpooling operation followed by the convultional layer
 	"""
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.5, checkpoints=False, pad = 1, dilation = 1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9, checkpoints=False, pad = 1, dilation = 1):
 		super(down, self).__init__()
 		self.checkpoints = checkpoints
 		self.mpconv = nn.Sequential(
@@ -138,7 +139,7 @@ class up01(nn.Module):
 	Amplitude recosntruction
 	Upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=None, checkpoints=False, pad = 1, dilation = 1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9, checkpoints=False, pad = 1, dilation = 1):
 		super(up01, self).__init__()
 		self.checkpoints = checkpoints
 		self.upconv = nn.Sequential(
@@ -158,7 +159,7 @@ class up02(nn.Module):
 	phase reconstriction
 	upsampling operation followed by the convolutional layer
 	'''
-	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.5, checkpoints=False, pad =1, dilation = 1):
+	def __init__(self, in_ch, out_ch, LRLUGrad=0.2, eps=1e-8, momentum=0.9, checkpoints=False, pad =1, dilation = 1):
 		super(up02, self).__init__()
 		self.checkpoints = checkpoints
 		self.upconv = nn.Sequential(
@@ -201,30 +202,24 @@ class NNModel(nn.Module):
 	'''
 	summing up all the operations to create the full network
 	'''
-	def __init__(self, n_channels=1, n_classes=1, LRLUGrad=0.1,checkpoints=False, momentum = None):
+	def __init__(self, n_channels=1, n_classes=1, LRLUGrad=0.2,checkpoints=False):
 		super(NNModel, self).__init__()
-
 		self.inconv = inconv(n_channels, 64)
-		self.down1 = down(64, 128,LRLUGrad=LRLUGrad,momentum=momentum, checkpoints=checkpoints, dilation = 1)
-		self.down2 = down(128, 256,LRLUGrad=LRLUGrad, momentum=momentum,checkpoints=checkpoints, dilation = 1)
-		self.down3 = down(256, 512,LRLUGrad=LRLUGrad,momentum=momentum, checkpoints=checkpoints, pad = 2, dilation = 2)
-		self.down4 = down(512, 1024,LRLUGrad=LRLUGrad,momentum=momentum, checkpoints=checkpoints, pad = 2, dilation = 2)
+		self.down1 = down(64, 128, checkpoints=checkpoints)
+		self.down2 = down(128, 256,checkpoints=checkpoints)
+		self.down3 = down(256, 512, checkpoints=checkpoints)
+		self.down4 = down(512, 1024, checkpoints=checkpoints)
 
-		self.up01 = up01(512, 256, LRLUGrad=LRLUGrad,momentum=momentum,checkpoints=checkpoints,pad = 1, dilation = 1)
-		self.up02 = up01(256, 128,LRLUGrad=LRLUGrad,momentum=momentum, checkpoints=checkpoints,pad = 1, dilation = 1)
-		self.up03 = up01(128, 64, LRLUGrad=LRLUGrad,momentum=momentum,checkpoints=checkpoints, pad = 1, dilation = 1)
+		self.up01 = up01(512, 256, checkpoints=checkpoints)
+		self.up02 = up01(256, 128, checkpoints=checkpoints)
+		self.up03 = up01(128, 64, checkpoints=checkpoints)
 		self.outc00 = outconv(64, n_classes)
 
-		self.up11 = up01(512, 256,LRLUGrad=LRLUGrad,momentum=momentum, checkpoints=checkpoints,pad = 1, dilation = 1)
-		self.up12 = up01(256, 128,LRLUGrad=LRLUGrad,momentum=momentum, checkpoints=checkpoints,pad = 1, dilation = 1)
-		self.up13 = up01(128, 64,LRLUGrad=LRLUGrad, momentum=momentum,checkpoints=checkpoints, pad = 1, dilation = 1)
+		self.up11 = up01(512, 256, checkpoints=checkpoints)
+		self.up12 = up01(256, 128, checkpoints=checkpoints)
+		self.up13 = up01(128, 64, checkpoints=checkpoints)
 		self.outc11 = outconv(64, n_classes)
 
-
-		# Define skip connections
-		self.skip1 = nn.Conv3d(512, 256, kernel_size=(1, 1, 1), stride=(1,1,1), padding=(0, 0, 0), bias=True)
-		self.skip2 = nn.Conv3d(256, 128, kernel_size=(1, 1, 1), stride=(1,1,1), padding=(0, 0, 0), bias=True)
-		self.skip3 = nn.Conv3d(128, 64, kernel_size=(1, 1, 1), stride=(1,1,1), padding=(0, 0, 0), bias=True)
 	
 	def DisableCheckpoints(self):
 		self.down1.checkpoints = False
@@ -237,9 +232,7 @@ class NNModel(nn.Module):
 		self.up11.checkpoints = False
 		self.up12.checkpoints = False
 		self.up13.checkpoints = False
-	# Define the circular tanh activation function
-	def circular_tanh(x):
-		return torch.atan2(torch.sin(x), torch.cos(x))
+	
 	def forward(self, x):
 		x = self.inconv(x)
 		x = self.down1(x)
@@ -247,34 +240,16 @@ class NNModel(nn.Module):
 		x = self.down3(x)
 		x = self.down4(x)
 
-
-		x1 = x[:, 0::2, :, :]
+		x1 = x[:, 0::2, :, :] #dedicating half the channels for one branch
 		x1 = self.up01(x1)
-		# skip01 = self.skip1(down3)
-		# x1 = torch.cat((x1, skip01), dim=1)
-
 		x1 = self.up02(x1)
-		# skip02 = self.skip2(down2)
-		# x1 = torch.cat((x1, skip02), dim=1)
-
 		x1 = self.up03(x1)
-		# skip03 = self.skip3(down1)
-		# x1 = torch.cat((x1, skip03), dim=1)
-
 		x1 = self.outc00(x1)
 
 		x2 = x[:, 1::2, :, :] #dedicating the other half for the other branch
 		x2 = self.up11(x2)
-		# skip11 = self.skip1(down3)
-		# x2 = torch.cat((x2, skip11), dim=1)
-
 		x2 = self.up12(x2)
-		# skip12 = self.skip2(down2)
-		# x2 = torch.cat((x2, skip12), dim=1)
-
 		x2 = self.up13(x2)
-		# skip13 = self.skip3(down1)
-		# x2 = torch.cat((x2, skip13), dim=1)
 		x2 = self.outc11(x2)
 
 		x1 = torch.relu(x1) #activation function in the final layer is a relu opposed to a leakReLU
@@ -411,7 +386,7 @@ class CNNTrain():
 			print('Using %s'%torch.cuda.get_device_name(0))
 		else:
 			print('Using %s'%self.device.type)
-		
+
 		self.model = self.model.float()
 	def SetValidSize(self, valid_size):
 		"""
@@ -465,7 +440,7 @@ class CNNTrain():
 
 		del datax, datay, dataz, dx, dy, dz, data_xyz
 		return trainloader
-
+	
 	def LoadSplitTrain(self, loadtype='test'):
 		"""
 		performs the splitting for the training and the validation sets
@@ -474,6 +449,7 @@ class CNNTrain():
 			self.loader['test'] = self._LoadSplitTrain(self.train_test_idxs['test'])
 		else:
 			self.loader['train'] = self._LoadSplitTrain(self.train_test_idxs['train'])
+
 	def LoadWeights(self, filename):
 		"""
 		Load weights from file.
@@ -596,18 +572,8 @@ class CNNTrain():
 		Compute the chi squared error of two sets of data.
 		"""
 		loss = torch.mean(torch.abs((output-target))**2)/(torch.mean(target**2)+1e-40)
-		return loss 
+		return loss
 
-	def chi_loss2(self, output, target):
-		"""
-		Compute the chi squared error of two sets of data.
-		"""
-		diff = torch.abs(output - target)
-		vx = torch.abs(output - torch.mean(output))
-		vy = torch.abs(target - torch.mean(target))
-		loss = torch.sum(diff**2)/ ((torch.sum(vy ** 2))+1e-8)
-		return loss 
-	
 	def pcc_loss(self, output, target):
 		"""
 		Pearson correlation coefficient.
@@ -617,44 +583,9 @@ class CNNTrain():
 		vx = torch.abs(x - torch.mean(x))
 		vy = torch.abs(y - torch.mean(y))
 		loss = torch.mean(vx * vy) / (torch.sqrt(torch.mean(vx ** 2) * torch.mean(vy ** 2))+1e-40)
-		return 1. - loss
-
-
-	def mse_loss(self, y_pred, y_true):
-		"""
-		Mean squared error (MSE) loss function
-		"""
-		loss = torch.mean(torch.square(torch.abs(y_true - y_pred)))/(torch.mean(torch.square(y_true))+1e-40)
-		return loss 
+		return 1.0 - loss
 	
-	def mae_loss(self, y_pred, y_true):
-		"""
-		Mean absolute error (MAE) loss function 
-		"""
-		print(torch.max(y_pred))
-		loss = torch.mean(torch.abs(y_true - y_pred))/ (torch.mean(torch.abs(y_true))+1e-40)
-		return loss 
-
-	def huber_loss(self, y_true, y_pred, delta=1.0):
-		"""
-		Huber loss function 
-		delta (float): Threshold parameter for the Huber loss function. Default is 1.0.
-		
-		"""
-		abs_diff = torch.abs(y_true - y_pred)
-		quadratic = torch.min(abs_diff, delta)
-		linear = abs_diff - quadratic
-		return torch.mean(0.5 * torch.square(quadratic) + delta * linear)
-	def log_cosh_loss(self, y_pred, y_true):
-		"""
-		Log-cosh loss function
-		"""
-		diff = y_true - y_pred
-		loss = diff + torch.nn.functional.softplus(-2. * diff) - math.log(2.0)
-		loss = torch.mean(loss)
-		return loss 
-	
-	def all_loss(self, output, target, input, alpha=1.0, beta=1.0, gamma=1.0, rs_pcc=False):
+	def all_loss(self, output, target, input, alpha=1.0, beta=1.0, gamma=4.0, rs_pcc=False):
 		"""
 		Total loss in the training. 
 		loss1: amplitude channel.
@@ -689,13 +620,13 @@ class CNNTrain():
 		
 		loss = (alpha * loss1 + beta * loss2 + gamma * loss3 ) / (alpha + beta + gamma)
 		return loss1, loss2, loss3, loss
-		
-	def criterion(self, output, target, input, alpha=1.0, beta=0.0, gamma=1.0, rs_pcc=False):
+	
+	def criterion(self, output, target, input, alpha=1.0, beta=1.0, gamma=4.0, rs_pcc=False):
 		"""
 		Call the desired loss function.
 		"""
+		#return self.all_loss(output, target, input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
 		return self.all_loss(output, target, input, alpha=alpha, beta=beta, gamma=gamma, rs_pcc=rs_pcc)
-
 	def GetLR(self, optimiser):
 		"""
 		Get learning rate.
@@ -852,6 +783,7 @@ class CNNTrain():
 			# Save
 			if epoch == (self.hyperpars['epochs'] -1):
 				self.SaveModel(epoch)
+
 
 	def SaveModel(self, epoch=0):
 		"""
@@ -1070,6 +1002,7 @@ class CNNPredict(CNNTrain, ShrinkWrap):
 		Must be a .pth file.
 		"""
 		self.trained_network = fname
+
 		if self.device.type == 'cuda':
 			self.model.load_state_dict(torch.load(self.trained_network))
 			#self.torcharray = self.torcharray.to(device = self.device, dtype = torch.float)
@@ -1092,40 +1025,8 @@ class CNNPredict(CNNTrain, ShrinkWrap):
 		self.support = self.support.to(self.device)
 		self.support = self.support.unsqueeze(0)
 	
-	def PredLoss(self, output, target, lossfunction_name):
-
-		X,Y,Z = self.shp
-		X2 = X//2
-		X4 = X//4
-		Y2 = Y//2
-		Y4 = Y//4
-		Z2 = Z//2
-		Z4 = Z//4
-
-		loss_function = getattr(self, lossfunction_name)
-
-		support = torch.zeros((output.shape[0]), X2, Y2, Z2, device = self.device) 
-		support[0,:,:,:] = self.support.clone()
-
-		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, requires_grad=False, device = self.device) 
-		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos(2*torch.pi * (output[:,1,:,:,:]))
-		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin(2*torch.pi * (output[:,1,:,:,:]))
-		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
-		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
-
-		amp_out = torch.abs(obj_comp[:,:,:,:])
-
-		# #Normalizing output amplitude
-		# max_Amp = torch.amax(amp_out, dim=[-3,-2,-1], keepdim=True)
-		# amp_out = torch.div(amp_out, max_Amp+1e-6)
-
-		loss = loss_function(amp_out, target) 
-
-		del obj_comp
-		del amp_out
-		return loss
 	
-	def LossSuppPenalty(self, output, target, lossfunction_name):
+	def LossSuppPenaltyOsc(self, output, target):
 
 		"""
 		Takes in: 
@@ -1142,87 +1043,10 @@ class CNNPredict(CNNTrain, ShrinkWrap):
 		"""
 
 		X,Y,Z = self.shp
-		X2 = X//2
 		X4 = X//4
-		Y2 = Y//2
 		Y4 = Y//4
-		Z2 = Z//2
 		Z4 = Z//4
 
-		#loss_function = getattr(self, lossfunction_name) 
-
-		# Amplitude Support
-		support = torch.zeros((output.shape[0]), X2, Y2, Z2, device = self.device) 
-		support[0,:,:,:] = self.support.clone()
-
-		# Compute Penalty Term For Values Outside Support
-		#unmasked_amp = output[:,0,:,:,:] * (torch.ones(output.shape[0],X2,Y2,Z2, device = self.device)-support)
-		unmasked_amp = output[:,0,:,:,:] * torch.where(support>0.5, 0, 1)
-		unmasked_amp = torch.sqrt(torch.sum(unmasked_amp**2)+1e-8)
-		amp_penalty = unmasked_amp
-		#amp_penalty = torch.tensor(0.0)
-
-
-		# Perform Fourier Transform on Output
-		pad = nn.ConstantPad3d((Z4,Z4,Y4,Y4,X4,X4), 0)
-		obj_comp = pad(output[:,0,:,:,:]) * torch.cos(2*torch.pi * pad(output[:,1,:,:,:])) + 1j * pad(output[:,0,:,:,:]) * torch.sin(2*torch.pi * pad(output[:,1,:,:,:]))
-
-		amp_out = torch.fft.fftshift(torch.fft.fftn(obj_comp, dim= (-3,-2,-1)), dim= (-3,-2,-1))
-		amp_out = torch.abs(amp_out[:,:,:,:])
-		amp_out = amp_out/(torch.max(amp_out)+1e-8)
-
-		# Fourier Space Loss
-		pcc_loss = self.pcc_loss(amp_out, target) 
-		chi_loss = self.chi_loss(amp_out, target)
-
-		# Phase Penalty 
-		phase_penalty = torch.tensor(0.0)
-		
-		alpha = 0.0
-		beta = 0.0
-		gamma = 1.0
-
-		# mean_loss = 1.0
-		# if len(self.train_loss) > 50:
-		# 	mean_loss = np.mean(self.train_loss[-50:-1])
-		# 	if mean_loss < 0.2: 
-		# 		#beta = -20.0*(mean_loss-0.2)+1.0
-		# 		#gamma = 50.0*mean_loss
-
-		tot_loss = (alpha*pcc_loss + beta*chi_loss + gamma*amp_penalty )/(alpha+beta+gamma)
-			
-		del obj_comp
-		del amp_out
-
-		return tot_loss, pcc_loss, chi_loss, amp_penalty, phase_penalty
-	
-	def LossSuppPenaltyOsc(self, output, target, lossfunction_name):
-
-		"""
-		Takes in: 
-			The output of the neural network 
-			Input diffraction Pattern
-
-		Computes: 
-			Loss between Fourier transform of the output and input 
-			Penalty term on the values outside the support
-
-		Returns: 
-			Scalar loss value
-		
-		"""
-
-		X,Y,Z = self.shp
-		X2 = X//2
-		X4 = X//4
-		Y2 = Y//2
-		Y4 = Y//4
-		Z2 = Z//2
-		Z4 = Z//4
-
-		#loss_function = getattr(self, lossfunction_name) 
-
-		# Amplitude Support
 
 		# Compute Penalty Term For Values Outside Support
 		unmasked_amp = torch.ones_like(self.support)
@@ -1247,19 +1071,19 @@ class CNNPredict(CNNTrain, ShrinkWrap):
 
 		epoch = len(self.train_loss)
 
-		pcc_period = 100
-		supp_period = 20
+		pcc_period = 110
+		supp_period = 10
 		osc_period = pcc_period + supp_period
 		osc_phase = epoch % osc_period 
 
-		if osc_phase<supp_period:
-			alpha = 0.0
+		if osc_phase<pcc_period:
+			alpha = 2.0
 			gamma = 1.0
-			beta = 0.0
+			beta = 2.0
 		else:
-			alpha = 1.0
-			beta = 0.5
-			gamma = 0.0
+			alpha = 2.0
+			gamma = 1.0
+			beta = 2.0
 
 
 		tot_loss = (alpha*pcc_loss + beta*chi_loss + gamma*amp_penalty )/(alpha+beta+gamma)
@@ -1269,46 +1093,13 @@ class CNNPredict(CNNTrain, ShrinkWrap):
 
 		return tot_loss, pcc_loss, chi_loss, amp_penalty
 	
-	def ValidationLoss(self, lossfunction_name , output, target):
 
-		X,Y,Z = self.shp
-		X2 = X//2
-		X4 = X//4
-		Y2 = Y//2
-		Y4 = Y//4
-		Z2 = Z//2
-		Z4 = Z//4
-
-		loss_function = getattr(self, lossfunction_name)
-
-		loss_amp = loss_function(output[:, 0, :, :, :], self.val_amp[ :, :, :])
-		loss_pha = loss_function(output[:, 1, :, :, :], self.val_pha[ :, :, :])
-
-		obj_comp = torch.zeros((output.shape[0]), 2, X, Y, Z, device = self.device, ) 
-		obj_comp[:, 0, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.cos((output[:,1,:,:,:]))
-		obj_comp[:, 1, (X2-X4):(X2+X4), (Y2-Y4):(Y2+Y4), (Z2 - Z4):(Z2 + Z4)] = output[:, 0, :, :, :] * torch.sin((output[:,1,:,:,:]))
-		obj_comp = obj_comp[:,0,:,:,:] +1j * obj_comp[:,1,:,:,:]
-		obj_comp = torch.fft.fftn(obj_comp, dim= (-3,-2,-1))
-
-		amp_out = torch.abs(obj_comp[:,:,:,:]).unsqueeze(0).float()
-		input = input.float()
-
-		# #Normalizing output amplitude
-		# max_Amp = torch.amax(amp_out, dim=[-3,-2,-1], keepdim=True)
-		# amp_out = torch.div(amp_out, max_Amp+1e-6)
-
-		loss = loss_function(amp_out, target)
-
-		del obj_comp
-		del amp_out
-		return [loss, loss_amp, loss_pha]
-
-	def criterion(self, lossfunc, output, target):
+	def criterion(self,  output, target):
 		"""
 		Call the desired loss function.
 		"""
 		#return self.PredLoss(output, input)
-		return self.LossSuppPenaltyOsc(lossfunction_name = lossfunc, output = output, target = target)
+		return self.LossSuppPenaltyOsc( output = output, target = target)
 	def Predict(self):
 		"""
 		Forward propagate the diffraction pattern 
@@ -1327,7 +1118,6 @@ class CNNPredict(CNNTrain, ShrinkWrap):
 
 		amp[:] = sequence[0,0,:,:,:]
 		pha[:] = sequence[0,1,:,:,:] * 2.0 * np.pi
-		pha[:] -= np.pi
 
 		com = amp * np.cos(pha) + 1j * amp * np.sin(pha)
 
@@ -1444,7 +1234,7 @@ class CNNPredict(CNNTrain, ShrinkWrap):
 
 					np.save(self.datestr+'/'+str(o)+self.output, comp)
 
-	def TransferPredict(self, AMP=False, validation = False, lossfunc = 'pcc_loss'):
+	def TransferPredict(self, AMP=False, validation = False):
 		torch.autograd.set_detect_anomaly(True)
 		scaler = GradScaler(init_scale=1.0, growth_factor=2.0, backoff_factor=0.5, growth_interval=100, enabled=True)
 		for epoch in range(self.hyperpars['epochs']):  # loop over the dataset multiple times
@@ -1499,14 +1289,14 @@ class CNNPredict(CNNTrain, ShrinkWrap):
 					# Forward propagation
 					y_predict = self.model(self.torcharray)
 					# Define the loss and then backward propagate
-					losses = self.criterion(lossfunc, y_predict, self.targetdata)
+					losses = self.criterion(y_predict, self.targetdata)
 					loss1 = losses[0]
 					loss_amp = losses[1]
 					loss_pha = losses[2]
 				else:
 					y_predict = self.model(self.expdata)
 					#y_predict = torch.where(self.support>0.5, y_predict, 0)
-					loss1, losses_pcc, losses_chi, losses_supp = self.criterion(lossfunc, y_predict, self.expdata)
+					loss1, losses_pcc, losses_chi, losses_supp = self.criterion( y_predict, self.expdata)
 
 				loss1.backward(retain_graph=False)
 			#incorporate a clip on the values of the gradients, to avoid exploding gradients 
@@ -1617,6 +1407,7 @@ class CNNPredict(CNNTrain, ShrinkWrap):
 			fig2 = plt.figure()
 			plt.plot(self.loss_pcc, label = 'PCC Loss')
 			plt.yscale('log')
+			plt.legend(frameon=False)
 			plt.savefig(self.datestr+'/'+'PCCLoss_'+self.datestr+'.png')
 
 			fig3 = plt.figure()
