@@ -3,22 +3,17 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as ss
-from cnnphase12 import NNModel, CNNTrain, CNNPredict
+from cnnphase import NNModel, CNNTrain, CNNPredict
 
 #Predict
 def Predict():
 	predict = CNNPredict()
 	predict.SetDevice('cuda')
 	predict.SetModel(NNModel, checkpoints=False)
-	#predict.SetExpData('expdata_ML.npy', mask=260, square_root=True) # 897014 - 110
-	#predict.SetExpData('expdata_ML2.npy', mask=380, square_root=True) # 896998 - 110
-	#predict.SetExpData('expdata_ML.npy', mask=650, square_root=True) # 896387 - 112 NEXT
 	predict.SetExpData('expdata_ML.npy', mask=190, square_root=True) # 896781 - 112
-	#predict.SetExpData('expdata_ML.npy', mask=240, square_root=True) # 896408 - 112
-	#predict.SetExpData('expdata_ML.npy', mask=190, square_root=True) # 8977 - 110
 	predict.SetOutputFile('YMO.npy')
-	predict.SetSupport('supportML.npy')
-	predict.SetTrainedNN("/scratch/ahmm1g15/MLTrainedNet/2023-06-02_15.15/CP150_2023-06-02_15.15.pth")
+	predict.SetSupport('support.npy')
+	predict.SetTrainedNN("CP150_2023-06-02_15.15.pth")
 	#predict.InitialiseWeights(nn.init.kaiming_normal_, mode='fan_in', nonlinearity='leaky_relu')
 	predict.SetLRStepSize(2)
 	predict.AddLR(5e-4)
@@ -48,9 +43,5 @@ def Predict():
 	predict.SaveParameters(training = False)
 	predict.PlotLoss()
 
-#ValidationSearch()
-#Gen()
-#HyperSpaceSearch()
-#Train()
+
 Predict()
-#PredictSearchParams()

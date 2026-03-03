@@ -3,19 +3,19 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as ss
-from cnnphase12 import NNModel, CNNTrain, CNNPredict
+from cnnphase import NNModel, CNNTrain, CNNPredict
 
 #Predict
 def Predict():
 	predict = CNNPredict()
 	predict.SetDevice('cuda')
 	predict.SetModel(NNModel, checkpoints=False)
-	predict.SetExpData('expdata.npy', mask=620, square_root=True) 
-	predict.SetOutputFile('Output_WSupport.npy')
-	predict.SetSupport('supportML.npy')
-	predict.SetTrainedNN("/scratch/ahmm1g15/MLTrainedNet/2023-06-02_15.15/CP150_2023-06-02_15.15.pth")
+	predict.SetExpData('expdata_ML.npy', mask=190, square_root=True) # 896781 - 112
+	predict.SetOutputFile('YMO.npy')
+	predict.SetSupport('support.npy')
+	predict.SetTrainedNN("CP150_2023-06-02_15.15.pth")
 	#predict.InitialiseWeights(nn.init.kaiming_normal_, mode='fan_in', nonlinearity='leaky_relu')
-	predict.SetLRStepSize(5)
+	predict.SetLRStepSize(2)
 	predict.AddLR(5e-4)
 	predict.AddLR(5e-5)
 	predict.AddLR(1e-6)
@@ -43,9 +43,5 @@ def Predict():
 	predict.SaveParameters(training = False)
 	predict.PlotLoss()
 
-#ValidationSearch()
-#Gen()
-#HyperSpaceSearch()
-#Train()
+
 Predict()
-#PredictSearchParams()
