@@ -1,1 +1,32 @@
+# macOS
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data & model files (large binary files — track separately if needed)
+*.npy
+*.pth
+*.pt
+*.h5
+*.hdf5
+
+# Plots / outputs
+*.png
+*.pdf
+
+# Virtual environments
+.venv/
+venv/
+env/

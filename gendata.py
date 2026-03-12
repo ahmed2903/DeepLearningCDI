@@ -3,9 +3,9 @@
 # Generate Training Data for CNN Phase Retrieval.
 # Derived from work by Longlong Wu.
 # 
-# Author: Marcus Newton
+# Author: Marcus Newton, Ahmed H Mokhtar
 # 
-# Version 0.3
+# Version .14
 # Licence: GNU GPL 3
 #
 # ###########################################

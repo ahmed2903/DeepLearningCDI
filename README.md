@@ -1,27 +1,127 @@
-# Deep Learning CDI
+# DL-CDI: Deep Learning Phase Retrieval for Coherent Diffractive Imaging
 
-Code for  Deep Learning Phase Retrieval 
+A 3D U-Net CNN framework for phase retrieval from X-ray diffraction patterns. Given a reciprocal-space intensity measurement, the network reconstructs the real-space complex object (amplitude + phase).
 
-Expected shape of training data: 
+**Authors:** Marcus Newton, Ahmed H. Mokhtar
+**Derived from:** work by Longlong Wu
+**License:** GNU GPL v3
 
-    2 files: 1) reciprocal intensity file (n,1,x,y,z)
-             2) real object file (n,2,x,y,z)
+---
 
-Training the neural network will produce a plot of the validation loss and the training loss at every epoch 
+## Overview
 
-SGD is used for the backpropagation algorithm, other function can be used such as ADAM
+The network is a 3D encoder–decoder CNN with a dual-branch decoder. It is trained on synthetic diffraction data and can then be applied to experimental measurements via iterative refinement with support constraints (ShrinkWrap).
 
-Weight initilization: performed using built-in pytorch functions 
-    for the batch normalization layer: all weights are set to 1 and biases to zero 
-    for the Convultional layer: a Kaimin distribution is used 
+### Key features
+- 3D encoder–decoder architecture (no skip connections)
+- Bottleneck channels split into two independent decoder branches — one for amplitude, one for phase
+- Separable 1D convolutions to reduce parameter count
+- Mixed-optimiser training schedule (Adadelta + Adam with varying epsilon)
+- StepLR learning rate scheduling
+- ShrinkWrap support constraint for experimental data refinement
+- Automatic Kaiming weight initialisation for convolutional layers
 
-    These initilization have proven to stabilize the network immensely 
+---
 
-Batch size: there is a memory limit of 32 batch size. Will have to edit the code to use multiple GPUs if we want to go higher than 32 
+## File structure
 
-Learning rate schedular: 
-    StepLR function which scales the LR by a factor Gamma every N steps (N is the learning rate step size which can be set)
+| File | Description |
+|------|-------------|
+| `cnnphase.py` | Core library: model architecture (`NNModel`), training (`CNNTrain`), prediction (`CNNPredict`), support constraint (`ShrinkWrap`) |
+| `gendata.py` | Synthetic data generator (`GenData`): hexagonal prism, octahedron, monoclinic crystal morphologies |
+| `runTrain.py` | Example script: generate data and train the network |
+| `runYMO.py` | Example script: run phase retrieval on experimental data |
 
-Code has one class for training and can be run using the train_cnn.py file
-        one class for prediction and can be run using the predict_obj.py file
+---
 
+## Installation
+
+```bash
+git clone https://github.com/<your-username>/DL_CDI.git
+cd DL_CDI
+pip install -r requirements.txt
+```
+
+For GPU support, install PyTorch with CUDA following the [official instructions](https://pytorch.org/get-started/locally/).
+
+---
+
+## Usage
+
+### 1. Generate training data
+
+```python
+from gendata import GenData
+
+d = GenData()
+d.SetShape([32, 32, 32])
+d.SetN(12000)
+d.SetMorphology("hexprism")  # or "octahedron", "monoclinic"
+d.GenShapeData()
+d.SaveData()
+# Produces: fs_amps.npy  (n, 1, x, y, z)  reciprocal-space intensities
+#           rs_objs.npy  (n, 2, x, y, z)  real-space amplitude + phase
+```
+
+### 2. Train the network
+
+See `runTrain.py` for a full example. Key steps:
+
+```python
+from cnnphase import NNModel, CNNTrain
+import torch.optim as optim
+import torch.optim.lr_scheduler as ss
+import torch.nn as nn
+
+cnn = CNNTrain()
+cnn.SetDevice('cuda')
+cnn.SetInputData('fs_amps.npy')
+cnn.SetTargetData('rs_objs.npy')
+cnn.SetModel(NNModel)
+cnn.SetBatchSize(32)          # max 32 per GPU
+cnn.InitialiseWeights(nn.init.kaiming_normal_, mode='fan_in', nonlinearity='leaky_relu')
+cnn.AddLR(1e-3)
+cnn.AddOptimiser(optim.Adam, eps=1e-8)
+cnn.AddScheduler(ss.StepLR)
+cnn.SetNEpochs(150)
+cnn.AddOpStep(150)
+cnn.TrainNN()
+cnn.SaveParameters()
+cnn.PlotLoss()
+```
+
+### 3. Phase retrieval on experimental data
+
+See `runYMO.py` for a full example. The `CNNPredict` class loads a trained checkpoint and refines the reconstruction iteratively.
+
+```python
+from cnnphase import NNModel, CNNPredict
+
+predict = CNNPredict()
+predict.SetDevice('cuda')
+predict.SetModel(NNModel)
+predict.SetExpData('expdata_ML.npy', mask=190, square_root=True)
+predict.SetSupport('support.npy')
+predict.SetTrainedNN('CP150_<timestamp>.pth')
+# ... configure optimisers, schedulers, epochs ...
+predict.TransferPredict()
+predict.SaveParameters(training=False)
+```
+
+---
+
+## Training data format
+
+| Array | Shape | Description |
+|-------|-------|-------------|
+| `fs_amps.npy` | `(n, 1, x, y, z)` | Reciprocal-space intensities (input) |
+| `rs_objs.npy` | `(n, 2, x, y, z)` | Real-space object — channel 0: amplitude, channel 1: phase (target) |
+
+---
+
+## Notes
+
+- **Batch size:** memory-limited to 32 per GPU. Use `DataParallel` for larger batches.
+- **Weight initialisation:** Kaiming for conv layers; ones/zeros for batch norm — this significantly stabilises training.
+- **Learning rate scheduler:** `StepLR` scales LR by gamma every N steps.
+- **Mixed precision:** `GradScaler` is available in `cnnphase.py` for AMP training.
