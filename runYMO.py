@@ -3,7 +3,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as ss
-from cnnphase import NNModel, CNNTrain, CNNPredict
+from model import NNModel
+from predict import CNNPredict
 
 #Predict
 def Predict():

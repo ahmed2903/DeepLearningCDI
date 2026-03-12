@@ -1,6 +1,6 @@
 # DL-CDI: Deep Learning Phase Retrieval for Coherent Diffractive Imaging
 
-A 3D U-Net CNN framework for phase retrieval from X-ray diffraction patterns. Given a reciprocal-space intensity measurement, the network reconstructs the real-space complex object (amplitude + phase).
+A 3D encoder–decoder CNN framework for phase retrieval from X-ray diffraction patterns. Given a reciprocal-space intensity measurement, the network reconstructs the real-space complex object (amplitude + phase).
 
 **Authors:** Marcus Newton, Ahmed H. Mokhtar
 **Derived from:** work by Longlong Wu
@@ -27,8 +27,10 @@ The network is a 3D encoder–decoder CNN with a dual-branch decoder. It is trai
 
 | File | Description |
 |------|-------------|
-| `cnnphase.py` | Core library: model architecture (`NNModel`), training (`CNNTrain`), prediction (`CNNPredict`), support constraint (`ShrinkWrap`) |
-| `gendata.py` | Synthetic data generator (`GenData`): hexagonal prism, octahedron, monoclinic crystal morphologies |
+| `model.py` | Network architecture: building blocks and `NNModel` |
+| `train.py` | `CNNTrain`: data loading, loss functions, training loop |
+| `predict.py` | `ShrinkWrap`, `CNNPredict`: iterative refinement with support constraint |
+| `gendata.py` | `GenData`: synthetic data generator (hexagonal prism, octahedron, monoclinic) |
 | `runTrain.py` | Example script: generate data and train the network |
 | `runYMO.py` | Example script: run phase retrieval on experimental data |
 

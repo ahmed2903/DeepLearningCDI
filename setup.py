@@ -14,7 +14,7 @@ setup(
     long_description_content_type="text/markdown",
     author="Marcus Newton, Ahmed H. Mokhtar",
     license="GPL-3.0",
-    py_modules=["model", "train", "predict", "cnnphase", "gendata"],
+    py_modules=["model", "train", "predict", "gendata"],
     python_requires=">=3.8",
     install_requires=requirements,
     classifiers=[
