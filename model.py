@@ -5,7 +5,7 @@
 #
 # Authors: Marcus Newton, Ahmed H. Mokhtar.
 #
-# Version 0.13_beta
+# Version 0.14
 # Licence: GNU GPL 3
 #
 # ###########################################
