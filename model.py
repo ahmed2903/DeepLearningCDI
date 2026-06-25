@@ -3,7 +3,7 @@
 # Neural network architecture for CNN phase retrieval.
 # Derived from work by Longlong Wu.
 #
-# Authors: Marcus Newton, Ahmed H. Mokhtar.
+# Authors: Ahmed H. Mokhtar, Marcus Newton
 #
 # Version 0.14
 # Licence: GNU GPL 3

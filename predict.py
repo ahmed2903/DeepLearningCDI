@@ -3,7 +3,7 @@
 # Prediction and support constraint classes for CNN phase retrieval.
 # Derived from work by Longlong Wu.
 #
-# Authors: Marcus Newton, Ahmed H. Mokhtar.
+# Authors: Ahmed H. Mokhtar, Marcus Newton
 #
 # Version 0.13_beta
 # Licence: GNU GPL 3
