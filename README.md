@@ -2,7 +2,7 @@
 
 A 3D encoder–decoder CNN framework for phase retrieval from X-ray diffraction patterns. Given a reciprocal-space intensity measurement, the network reconstructs the real-space complex object (amplitude + phase).
 
-**Authors:** Marcus Newton, Ahmed H. Mokhtar
+**Authors:** Ahmed H. Mokhtar, Marcus Newton
 **Derived from:** work by Longlong Wu
 **License:** GNU GPL v3
 
